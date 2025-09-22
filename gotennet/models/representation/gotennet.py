@@ -428,6 +428,26 @@ def get_timestep_embedding(timesteps, embedding_dim, max_positions=10000):
     return emb
 
 
+def get_neb_image_embedding(image_indices, embedding_dim, max_images=10):
+    """"
+    Get sinusoidal embedding for image indices in NEB.
+    Args:
+        image_indices: [batch_size] tensor with NEB image indices (0, 1, 2, ..., 9)
+        embedding_dim: same as timestep embedding
+        max_images: maximum number of NEB images
+    """
+    half_dim = embedding_dim // 2
+    # magic number 10000 is from transformers
+    emb = math.log(max_images) / (half_dim - 1)
+    emb = torch.exp(torch.arange(half_dim, dtype=torch.float32, device=image_indices.device) * -emb)
+    emb = image_indices.float().unsqueeze(-1) * emb.unsqueeze(0)
+    emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=1)
+    if embedding_dim % 2 == 1:  # zero pad
+        emb = F.pad(emb, (0, 1), mode='constant')
+    assert emb.shape == (image_indices.shape[0], embedding_dim)
+    return emb
+
+
 class TimestepEmbedding(nn.Module):
     def __init__(self, embedding_dim, hidden_dim, output_dim):
         super().__init__()
@@ -445,6 +465,24 @@ class TimestepEmbedding(nn.Module):
         t_emb = get_timestep_embedding(timesteps.squeeze(), self.embedding_dim)
         t_emb_mlp = self.mlp(t_emb)
         return t_emb_mlp
+    
+class NEBPositionEmbedding(nn.Module):
+    def __init__(self, embedding_dim, hidden_dim, max_images):
+        super().__init__()
+
+        self.embedding_dim = embedding_dim
+        self.max_images = max_images
+
+        self.mlp = nn.Sequential(
+            Dense(embedding_dim, hidden_dim, norm='layer', activation=nn.SiLU()),
+            Dense(hidden_dim, hidden_dim, norm='layer', activation=nn.SiLU()),
+        )
+
+    def forward(self, image_indices):
+        t_emb = get_neb_image_embedding(image_indices.squeeze(), self.embedding_dim, self.max_images)
+        t_emb_mlp = self.mlp(t_emb)
+        return t_emb_mlp
+
 
 
 class GotenNet(nn.Module):
@@ -512,6 +550,7 @@ class GotenNet(nn.Module):
                                        proj_ln='').jittable()
 
         self.time_embedding = TimestepEmbedding(128, 128, self.hidden_dim)
+        self.neb_position_embedding = NEBPositionEmbedding(embedding_dim=128,hidden_dim=self.hidden_dim)
 
         radial_basis = str2basis(radial_basis)
         self.radial_basis = radial_basis(cutoff=self.cutoff, scaling=self.scaling, n_rbf=n_rbf)
@@ -551,7 +590,7 @@ class GotenNet(nn.Module):
         for l in self.eqff:
             l.reset_parameters()
 
-    def forward(self, x_t_N_3: Tensor, t_G: Tensor, inputs: Mapping[str, torch.Tensor]) -> Tuple[
+    def forward(self, x_t_N_3: Tensor, t_G: Tensor, inputs: Mapping[str, torch.Tensor], neb_image_idx: Optional[Tensor]) -> Tuple[
         torch.Tensor, torch.Tensor]:
         """
         Compute atomic representations/embeddings.
@@ -582,6 +621,11 @@ class GotenNet(nn.Module):
         q = self.neighbor_embedding(atom_type, r_feat, p_feat, q, edge_index, edge_weight, edge_attr, edge_type_r,
                                     edge_type_p)
         t_emb_G = self.time_embedding(t_G)
+        if neb_image_idx is not None:
+            neb_emb_G = self.neb_position_embedding(neb_image_idx)  # [batch_size, hidden_dim]
+            neb_emb_N = neb_emb_G[batch] if batch is not None else neb_emb_G.expand(len(atom_type), -1)
+            q = q + neb_emb_N  # Add to node features
+
         if batch is None:  # batch size = 1
             batch = torch.tensor([0] * len(atom_type), device=q.device)
         t_emb_N = t_emb_G[batch]

@@ -2,3 +2,8 @@
 data/RDB7/processed_data/data.pkl
 uv.lock
 .rsyncignore
+
+# test files
+test-cases/
+logs/
+__pycache__/
