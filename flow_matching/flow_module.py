@@ -95,11 +95,42 @@ class FlowModule(pl.LightningModule):
         atom_N_3 = self.model_output(x_t_N_3, batch, t_G)
 
         return rmsd_loss(atom_N_3, dx_dt_N_3)
-
+    
     def model_output(self, x_t_N_3, batch: Data, t_G: Tensor) -> Tensor:
         h_N_D, X_N_L_D = self.representation(x_t_N_3, t_G, batch)
         atom_N_3 = self.atomwise_3D_out_layer(h_N_D, X_N_L_D[:, :3, :])
         return atom_N_3
+    
+    ### New methods for NEB image conditioning
+    
+    def get_perturbed_flow_point_and_time_with_neb(self, batch: Data):
+
+        neb_img_idx, num_atoms, dim = batch.pos.shape
+        rtsp_i = 1 # -> neb image index
+
+        x_1_N_3 = batch.pos[:, rtsp_i, :]
+        x_0_N_3 = torch.randn_like(x_1_N_3, device=self.device)
+
+        t_G = torch.rand(batch.num_graphs, 1, device=self.device)
+        t_N = t_G[batch.batch]
+
+        x_1_aligned_N_3 = get_shortest_path_fast_batched_x_1(x_0_N_3, x_1_N_3, batch)
+        x_t_N_3 = (1 - t_N) * x_0_N_3 + t_N * x_1_aligned_N_3
+        dx_dt_N_3 = x_1_aligned_N_3 - x_0_N_3
+
+        return x_t_N_3, dx_dt_N_3, t_G
+    
+    def train_val_step_with_neb(self, batch: Data) -> Tensor:
+        x_t_N_3, dx_dt_N_3, t_G, neb_img_idx = self.get_perturbed_flow_point_and_time_with_neb(batch)
+
+        atom_N_3 = self.model_output_with_neb(x_t_N_3, batch, t_G, neb_img_idx)
+
+        return rmsd_loss(atom_N_3, dx_dt_N_3)
+
+    def model_output_with_neb(self, x_t_N_3, batch: Data, t_G: Tensor, neb_img_idx: Tensor) -> Tensor:
+       h_N_D, X_N_L_D = self.representation(x_t_N_3, t_G, batch, neb_img_idx)
+       atom_N_3 = self.atomwise_3D_out_layer(h_N_D, X_N_L_D[:, :3, :])
+       return atom_N_3
 
     def training_step(self, batch: Data, batch_idx: int) -> Tensor:
         loss = self.train_val_step(batch)

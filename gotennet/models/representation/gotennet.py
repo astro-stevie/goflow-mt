@@ -437,7 +437,6 @@ def get_neb_image_embedding(image_indices, embedding_dim, max_images=10):
         max_images: maximum number of NEB images
     """
     half_dim = embedding_dim // 2
-    # magic number 10000 is from transformers
     emb = math.log(max_images) / (half_dim - 1)
     emb = torch.exp(torch.arange(half_dim, dtype=torch.float32, device=image_indices.device) * -emb)
     emb = image_indices.float().unsqueeze(-1) * emb.unsqueeze(0)
