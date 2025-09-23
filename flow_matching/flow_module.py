@@ -105,7 +105,7 @@ class FlowModule(pl.LightningModule):
     
     def get_perturbed_flow_point_and_time_with_neb(self, batch: Data):
 
-        neb_img_idx, num_atoms, dim = batch.pos.shape
+        num_atoms, dim, neb_img_idx = batch.pos.shape
         rtsp_i = 1 # -> neb image index
 
         x_1_N_3 = batch.pos[:, rtsp_i, :]
