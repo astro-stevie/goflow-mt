@@ -1,0 +1,30 @@
+_target_: flow_matching.flow_module.FlowModule
+
+# Inherit base flow model settings
+defaults:
+  - flow
+
+# NEB-specific settings
+use_neb_images: true
+neb_embedding_dim: 64
+neb_max_images: 50
+
+# Model architecture (GotenNet with NEB support)
+representation:
+  _target_: gotennet.models.representation.gotennet.GotenNet
+  n_atom_basis: 256
+  n_interactions: 8
+  # ... other GotenNet parameters
+  
+  # NEB embedding parameters
+  use_neb_embedding: ${model.use_neb_images}
+  neb_embedding_dim: ${model.neb_embedding_dim}
+  neb_max_images: ${model.neb_max_images}
+
+# Flow matching parameters
+num_steps: 25
+num_samples: 25
+lr: 1e-4
+
+# Training settings
+seed: ${seed}

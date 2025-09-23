@@ -3,3 +3,11 @@ _target_: gotennet.data.components.rdb7.RDB7DataModule
 data_file: ${paths.data_dir}/T1X/processed_data/data.pkl # data_path is specified in config.yaml
 split_path: ${paths.data_dir}/T1X/splits
 batch_size: 200
+
+# NEB-specific data settings
+use_neb_data: true
+num_neb_images: 7  # Total images per NEB path (including endpoints)
+neb_sampling_strategy: "random"  # or "sequential", "weighted"
+
+# Data augmentation
+augment_data: false  # NEB paths are already computed, less need for augmentation
