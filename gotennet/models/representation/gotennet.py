@@ -428,23 +428,30 @@ def get_timestep_embedding(timesteps, embedding_dim, max_positions=10000):
     return emb
 
 
-def get_neb_image_embedding(image_indices, embedding_dim, max_images=10):
-    """"
-    Get sinusoidal embedding for image indices in NEB.
-    Args:
-        image_indices: [batch_size] tensor with NEB image indices (0, 1, 2, ..., 9)
-        embedding_dim: same as timestep embedding
-        max_images: maximum number of NEB images
+def get_neb_image_embedding(step_G, dim, *, t_min=1.0, t_max=10.0,
+                     min_cycles=0.5, max_cycles=20.0):
     """
-    half_dim = embedding_dim // 2
-    emb = math.log(max_images) / (half_dim - 1)
-    emb = torch.exp(torch.arange(half_dim, dtype=torch.float32, device=image_indices.device) * -emb)
-    emb = image_indices.float().unsqueeze(-1) * emb.unsqueeze(0)
-    emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=1)
-    if embedding_dim % 2 == 1:  # zero pad
-        emb = F.pad(emb, (0, 1), mode='constant')
-    assert emb.shape == (image_indices.shape[0], embedding_dim)
-    return emb
+    step_G: (L,) float, your NEB step size (possibly fractional) in [t_min, t_max]
+    dim (D): embedding dimension (even preferred)
+
+    We map step_G -> [0,1], then use log-spaced frequencies so that the
+    highest band completes ~max_cycles cycles over the domain.
+    """
+    assert step_G.dim() == 1
+    s = (step_G - t_min) / (t_max - t_min)  # normalize to [0,1]
+    half = dim // 2
+
+    # log-spaced frequencies in [min_cycles, max_cycles] cycles over [0,1]
+    freqs = torch.exp(torch.linspace(
+        math.log(min_cycles), math.log(max_cycles), half, device=step_G.device
+    ))  # (half,)
+
+    # 2pi * cycles * s  (=> cycles means how many wraps across [0,1])
+    angles = 2 * math.pi * s[:, None] * freqs[None, :]    # (G, half)
+    emb_G_D = torch.cat([torch.sin(angles), torch.cos(angles)], dim=-1)  # (G, 2*half)
+    if dim % 2 == 1:
+        emb_G_D = F.pad(emb_G_D, (0, 1))
+    return emb_G_D
 
 
 class TimestepEmbedding(nn.Module):
@@ -466,21 +473,32 @@ class TimestepEmbedding(nn.Module):
         return t_emb_mlp
     
 class NEBPositionEmbedding(nn.Module):
-    def __init__(self, embedding_dim, hidden_dim, max_images):
+    def __init__(self, embedding_dim, hidden_dim, output_dim, 
+                 t_min=1.0, t_max=10.0, min_cycles=0.5, max_cycles=20.0):
         super().__init__()
 
         self.embedding_dim = embedding_dim
-        self.max_images = max_images
+        self.output_dim = output_dim
+        self.hidden_dim = hidden_dim
+
+        self.t_min = t_min
+        self.t_max = t_max
+        self.min_cycles = min_cycles
+        self.max_cycles = max_cycles
 
         self.mlp = nn.Sequential(
             Dense(embedding_dim, hidden_dim, norm='layer', activation=nn.SiLU()),
-            Dense(hidden_dim, hidden_dim, norm='layer', activation=nn.SiLU()),
+            Dense(hidden_dim, output_dim, norm='layer', activation=nn.SiLU(),
+                weight_init=lambda w: nn.init.zeros_(w),
+                bias_init=lambda b: nn.init.zeros_(b)
+            )
         )
-
-    def forward(self, image_indices):
-        t_emb = get_neb_image_embedding(image_indices.squeeze(), self.embedding_dim, self.max_images)
-        t_emb_mlp = self.mlp(t_emb)
-        return t_emb_mlp
+    def forward(self, step_G):
+        step_emb_G_D = get_neb_image_embedding(step_G.squeeze(), self.embedding_dim,
+                                    t_min=self.t_min, t_max=self.t_max,
+                                    min_cycles=self.min_cycles, max_cycles=self.max_cycles)
+        step_emb_mlp_G_Z = self.mlp(step_emb_G_D)
+        return step_emb_mlp_G_Z
 
 
 
