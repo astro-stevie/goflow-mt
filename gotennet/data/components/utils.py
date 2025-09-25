@@ -3,6 +3,7 @@ import torch
 from pytorch_lightning.utilities import rank_zero_warn
 import pickle
 from torch_geometric.data import Dataset
+import os
 
 
 class ConformationDataset(Dataset):
@@ -17,6 +18,7 @@ class ConformationDataset(Dataset):
         """
         super().__init__()
         
+        print(os.path.abspath(data_file))
         with open(data_file, "rb") as f:
             all_data = pickle.load(f)
         

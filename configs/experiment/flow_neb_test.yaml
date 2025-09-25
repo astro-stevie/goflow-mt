@@ -1,5 +1,9 @@
 # @package _global_
 
+defaults:
+  - override /model: flow_neb
+  - override /data: t1x
+
 # Test NEB multi-image training
 model:
   representation:

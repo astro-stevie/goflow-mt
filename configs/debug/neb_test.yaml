@@ -1,5 +1,8 @@
 # @package _global_
 
+defaults:
+  - override /data: t1x
+
 # Quick debugging setup for NEB implementation
 task_name: "neb_debug"
 
@@ -17,8 +20,9 @@ trainer:
   detect_anomaly: true
 
 data:
-  num_workers: 0
-  pin_memory: False
+  data_file: ./data/T1X/data.pkl
+  split_path: ./data/T1X/splits
+  split_file: split.pkl
   batch_size: 4  # Small batch for debugging
 
 model:

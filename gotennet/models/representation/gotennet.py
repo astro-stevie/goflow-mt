@@ -567,7 +567,7 @@ class GotenNet(nn.Module):
                                        proj_ln='').jittable()
 
         self.time_embedding = TimestepEmbedding(128, 128, self.hidden_dim)
-        self.neb_position_embedding = NEBPositionEmbedding(embedding_dim=128,hidden_dim=self.hidden_dim)
+        self.neb_position_embedding = NEBPositionEmbedding(embedding_dim=128, output_dim=128, hidden_dim=self.hidden_dim)
 
         radial_basis = str2basis(radial_basis)
         self.radial_basis = radial_basis(cutoff=self.cutoff, scaling=self.scaling, n_rbf=n_rbf)

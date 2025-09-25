@@ -119,9 +119,9 @@ class FlowModule(pl.LightningModule):
     def model_output_with_neb(self, x_t_N_3, batch: Data, t_G: Tensor, neb_img_idx: Tensor) -> Tensor:
        # Both embeddings provide complementary information
         time_emb = self.representation.time_embedding(t_G)
-        step_emb = self.neb_step_size_embedding(neb_img_idx .float())
+        step_emb = self.representation.neb_position_embedding(neb_img_idx.float())
 
-        h_N_D, X_N_L_D = self.representation(x_t_N_3, time_emb+step_emb, batch, neb_img_idx)
+        h_N_D, X_N_L_D = self.representation(x_t_N_3, time_emb + step_emb, batch, neb_img_idx)
         atom_N_3 = self.atomwise_3D_out_layer(h_N_D, X_N_L_D[:, :3, :])
         return atom_N_3
 
