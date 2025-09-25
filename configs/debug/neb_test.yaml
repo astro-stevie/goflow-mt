@@ -1,0 +1,26 @@
+# @package _global_
+
+# Quick debugging setup for NEB implementation
+task_name: "neb_debug"
+
+callbacks: null
+logger: null
+
+extras:
+  ignore_warnings: False
+  enforce_tags: False
+
+trainer:
+  max_epochs: 2  # Just 2 epochs for quick testing
+  accelerator: cpu
+  devices: 1
+  detect_anomaly: true
+
+data:
+  num_workers: 0
+  pin_memory: False
+  batch_size: 4  # Small batch for debugging
+
+model:
+  num_steps: 5  # Fewer ODE steps for speed
+  num_samples: 1  # Single sample for debugging

@@ -8,3 +8,5 @@ test-cases/
 logs/
 __pycache__/
 figures/
+test_local_neb.sh
+validate_neb.py

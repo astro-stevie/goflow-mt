@@ -6,7 +6,7 @@ defaults:
 
 # NEB-specific settings
 use_neb_images: true
-neb_embedding_dim: 64
+neb_embedding_dim: 128
 neb_max_images: 50
 
 # Model architecture (GotenNet with NEB support)

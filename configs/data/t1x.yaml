@@ -6,7 +6,7 @@ batch_size: 200
 
 # NEB-specific data settings
 use_neb_data: true
-num_neb_images: 7  # Total images per NEB path (including endpoints)
+num_neb_images: 8  # Total images per NEB path (including endpoints)
 neb_sampling_strategy: "random"  # or "sequential", "weighted"
 
 # Data augmentation
