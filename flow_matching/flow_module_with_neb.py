@@ -78,7 +78,7 @@ class FlowModule(pl.LightningModule):
     
     def get_perturbed_flow_point_and_time_with_neb(self, batch: Data):
 
-        num_atoms, dim, neb_img = batch.pos.shape
+        num_atoms, dim, neb_img = batch.pos_N_3_I.shape
         # Collect all flow data for all NEB images
         all_x_t = []
         all_dx_dt = []
@@ -86,7 +86,7 @@ class FlowModule(pl.LightningModule):
         all_neb_imgs = []
 
         for neb_idx in range(0, neb_img):
-            x_1_N_3 = batch.pos[:, :, neb_idx]
+            x_1_N_3 = batch.pos_N_3_I[:, :, neb_idx]
             x_0_N_3 = torch.randn_like(x_1_N_3, device=self.device)
 
             t_G = torch.rand(batch.num_graphs, 1, device=self.device)

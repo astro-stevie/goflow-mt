@@ -624,7 +624,17 @@ class GotenNet(nn.Module):
         # get tensors from input dictionary
         # atomic_numbers, pos, batch, edge_index = inputs.z, inputs.pos, inputs.batch, inputs.edge_index
         edge_index, edge_type, batch = inputs.edge_index, inputs.edge_type, inputs.batch
-        r_feat, p_feat, atom_type = inputs.r_feat, inputs.p_feat, inputs.atom_type
+        
+        # Handle different data formats - T1X vs RDB7
+        if hasattr(inputs, 'r_feat_N_Z'):
+            r_feat, p_feat = inputs.r_feat_N_Z, inputs.p_feat_N_Z
+        else:
+            r_feat, p_feat = inputs.r_feat, inputs.p_feat
+            
+        if hasattr(inputs, 'atom_type_N'):
+            atom_type = inputs.atom_type_N
+        else:
+            atom_type = inputs.atom_type
 
         edge_index, _, edge_type_r, edge_type_p = _extend_condensed_graph_edge(x_t_N_3, edge_index, edge_type, batch,
                                                                                cutoff=self.cutoff,
