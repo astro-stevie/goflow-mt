@@ -18,7 +18,6 @@ class ConformationDataset(Dataset):
         """
         super().__init__()
         
-        print(os.path.abspath(data_file))
         with open(data_file, "rb") as f:
             all_data = pickle.load(f)
         
@@ -48,8 +47,6 @@ class ConformationDataset(Dataset):
         """All atom types."""
         atom_types = set()
         for i, graph in enumerate(self.data):
-            # if i == 0:  # Only print once for debugging
-                # print(f"Graph {i} attributes: {list(graph.keys())}")
             if hasattr(graph, 'atom_type_N'):
                 atom_types.update(graph.atom_type_N.tolist())
             elif hasattr(graph, 'atom_type'):

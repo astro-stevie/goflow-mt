@@ -117,13 +117,31 @@ class FlowModule(pl.LightningModule):
         return rmsd_loss(atom_N_3, dx_dt_N_3)
 
     def model_output_with_neb(self, x_t_N_3, batch: Data, t_G: Tensor, neb_img_idx: Tensor) -> Tensor:
-       # Both embeddings provide complementary information
-        time_emb = self.representation.time_embedding(t_G)
-        step_emb = self.representation.neb_position_embedding(neb_img_idx.float())
-
-        h_N_D, X_N_L_D = self.representation(x_t_N_3, time_emb + step_emb, batch, neb_img_idx)
-        atom_N_3 = self.atomwise_3D_out_layer(h_N_D, X_N_L_D[:, :3, :])
-        return atom_N_3
+        # Process each NEB image separately to avoid batch concatenation issues
+        N = batch.num_nodes
+        neb_img = x_t_N_3.shape[0] // N  # number of NEB images
+        
+        all_atom_outputs = []
+        
+        for i in range(neb_img):
+            # Extract atomic positions for this NEB image
+            start_idx = i * N
+            end_idx = (i + 1) * N
+            x_t_single = x_t_N_3[start_idx:end_idx]
+            
+            # Extract corresponding time and NEB index info  
+            t_G_single = t_G[i * batch.num_graphs:(i + 1) * batch.num_graphs]
+            neb_idx_single = neb_img_idx[i * batch.num_graphs:(i + 1) * batch.num_graphs]
+            
+            # Process this NEB image with original batch structure
+            # Pass raw time values and NEB indices, let the representation handle embedding
+            h_N_D, X_N_L_D = self.representation(x_t_single, t_G_single, batch, neb_idx_single)
+            atom_N_3 = self.atomwise_3D_out_layer(h_N_D, X_N_L_D[:, :3, :])
+            
+            all_atom_outputs.append(atom_N_3)
+        
+        # Concatenate results from all NEB images
+        return torch.cat(all_atom_outputs, dim=0)
 
     def training_step(self, batch: Data, batch_idx: int) -> Tensor:
         loss = self.train_val_step_with_neb(batch)
