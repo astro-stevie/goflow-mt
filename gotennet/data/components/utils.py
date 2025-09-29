@@ -47,15 +47,30 @@ class ConformationDataset(Dataset):
     def _atom_types(self):
         """All atom types."""
         atom_types = set()
-        for graph in self.data:
-            atom_types.update(graph.atom_type.tolist())
+        for i, graph in enumerate(self.data):
+            # if i == 0:  # Only print once for debugging
+                # print(f"Graph {i} attributes: {list(graph.keys())}")
+            if hasattr(graph, 'atom_type_N'):
+                atom_types.update(graph.atom_type_N.tolist())
+            elif hasattr(graph, 'atom_type'):
+                atom_types.update(graph.atom_type.tolist())
+            else:
+                print(f"Graph {i} has no 'atom_type_N' or 'atom_type' attribute")
+                if i > 2:  # Only print first few for debugging
+                    break
         return sorted(atom_types)
 
     def _edge_types(self):
         """All edge types."""
         edge_types = set()
-        for graph in self.data:
-            edge_types.update(graph.edge_type.tolist())
+        for i, graph in enumerate(self.data):
+            if hasattr(graph, 'edge_type'):
+                edge_types.update(graph.edge_type.tolist())
+            else:
+                if i == 0:  # Only print once for debugging
+                    print(f"Graph {i} has no 'edge_type' attribute")
+            if i > 2:  # Only print first few for debugging
+                break
         return sorted(edge_types)
     
     
@@ -65,7 +80,17 @@ class CountNodesPerGraph(object):
 
     def __call__(self, data):
         if not hasattr(data, "__num_nodes__"):
-            data.num_nodes = len(data.pos)
+            # Handle different position data formats
+            if hasattr(data, 'pos_N_3_I'):
+                # T1X format: [atoms, 3D_coords, NEB_images]
+                data.num_nodes = data.pos_N_3_I.shape[0]  # First dimension is number of atoms
+                # Create pos attribute from first NEB image for compatibility
+                data.pos = data.pos_N_3_I[:, :, 0]  # Shape: [atoms, 3]
+            elif hasattr(data, 'pos') and data.pos is not None:
+                # Standard format
+                data.num_nodes = len(data.pos)
+            else:
+                raise ValueError("Data has no position information (pos or pos_N_3_I)")
         data.num_nodes_per_graph = torch.LongTensor([data.num_nodes])
         return data
 

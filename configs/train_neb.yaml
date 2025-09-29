@@ -22,7 +22,7 @@ defaults:
   - optional local: default
 
   # debugging config (enable through command line, e.g. `python train.py debug=default)
-  - debug: null
+  - debug: neb_test
 
 # task name, determines output directory path
 project: "flow-matching-gotennet" # wandb project name
