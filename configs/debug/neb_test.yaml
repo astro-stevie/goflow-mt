@@ -6,8 +6,14 @@ defaults:
 # Quick debugging setup for NEB implementation
 task_name: "neb_debug"
 
-callbacks: null
-logger: null
+callbacks:
+  ema_loss:
+    _target_: gotennet.models.components.callbacks.EMALossCallback
+    alpha: 0.99
+    validation_loss_name: "val_loss"
+    ema_log_name: "validation/ema_loss"
+
+# logger: null  # Commented out to allow command-line logger override
 
 extras:
   ignore_warnings: False

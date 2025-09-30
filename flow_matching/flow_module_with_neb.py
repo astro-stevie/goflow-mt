@@ -69,7 +69,7 @@ class FlowModule(pl.LightningModule):
 
         self.scheduler = scheduler
 
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore=['representation'])
 
         # save results in test_step
         self.results_R = []

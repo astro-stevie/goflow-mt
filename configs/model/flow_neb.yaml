@@ -5,7 +5,7 @@ _target_: flow_matching.flow_module_with_neb.FlowModule
 lr: 0.0005
 lr_decay: 0.8
 lr_patience: 5
-lr_monitor: "validation/ema_loss"
+lr_monitor: "validation/val_loss"
 ema_decay: 0.9
 weight_decay: 0.01
 
