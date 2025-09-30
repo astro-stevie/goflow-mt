@@ -104,28 +104,28 @@ class FlowModule(pl.LightningModule):
         # Stack all results
         x_t_I_N_3 = torch.stack(x_t_10_N_3)
         dx_dt_I_N_3 = torch.stack(dx_dt_10_N_3)
-        t_G_I_G = torch.stack(t_G_10)
+        t_I_G = torch.stack(t_G_10)
         neb_imgs_I_G = torch.stack(neb_imgs_10)
 
-        return x_t_I_N_3, dx_dt_I_N_3, t_G_I_G, neb_imgs_I_G
+        return x_t_I_N_3, dx_dt_I_N_3, t_I_G, neb_imgs_I_G
 
     def train_val_step_with_neb(self, batch: Data) -> Tensor:
-        x_t_I_N_3, dx_dt_I_N_3, t_G_I_G, neb_img_I_G = self.get_perturbed_flow_point_and_time_with_neb(batch)
+        x_t_I_N_3, dx_dt_I_N_3, t_I_G, neb_img_I_G = self.get_perturbed_flow_point_and_time_with_neb(batch)
 
-        atom_I_N_3 = self.model_output_with_neb(x_t_I_N_3, batch, t_G_I_G, neb_img_I_G)
+        atom_I_N_3 = self.model_output_with_neb(x_t_I_N_3, batch, t_I_G, neb_img_I_G)
 
         return rmsd_loss(atom_I_N_3, dx_dt_I_N_3)
 
-    def model_output_with_neb(self, x_t_I_N_3, batch: Data, t_G_I_G: Tensor, neb_img_I_G: Tensor) -> Tensor:
+    def model_output_with_neb(self, x_t_I_N_3, batch: Data, t_I_G: Tensor, neb_img_I_G: Tensor) -> Tensor:
 
-        num_images = x_t_I_N_3.shape[0]  # Number of NEB images
+        num_images = neb_img_I_G.shape[0]  # Number of NEB images
         atom_I_N_3 = []
         
         for i in range(num_images):
             # Extract data for this NEB image
-            x_t_N_3 = x_t_I_N_3[i]  # [Nodes, Coords]
-            t_G = t_G_I_G[i]  # [NumGraphs, 1] 
-            neb_idx_G = neb_img_I_G[i]  # [NumGraphs]
+            x_t_N_3 = x_t_I_N_3[i] 
+            t_G = t_I_G[i]  
+            neb_idx_G = neb_img_I_G[i]
             
             h_N_D, X_N_L_D = self.representation(x_t_N_3, t_G, batch, neb_idx_G)
             atom_N_3 = self.atomwise_3D_out_layer(h_N_D, X_N_L_D[:, :3, :])
