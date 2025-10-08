@@ -468,7 +468,10 @@ class TimestepEmbedding(nn.Module):
         )
 
     def forward(self, timesteps):
-        t_emb = get_timestep_embedding(timesteps.squeeze(), self.embedding_dim)
+        # Ensure timesteps is 1D - handle both cases
+        if len(timesteps.shape) > 1:
+            timesteps = timesteps.flatten()
+        t_emb = get_timestep_embedding(timesteps, self.embedding_dim)
         t_emb_mlp = self.mlp(t_emb)
         return t_emb_mlp
     
@@ -494,7 +497,13 @@ class NEBPositionEmbedding(nn.Module):
             )
         )
     def forward(self, step_G):
-        step_emb_G_D = get_neb_image_embedding(step_G.squeeze(), self.embedding_dim,
+        # Ensure step_G is 1-dimensional, handling both scalar and tensor cases
+        if step_G.dim() == 0:
+            step_G_1d = step_G.unsqueeze(0)
+        else:
+            step_G_1d = step_G.flatten()
+        
+        step_emb_G_D = get_neb_image_embedding(step_G_1d, self.embedding_dim,
                                     t_min=self.t_min, t_max=self.t_max,
                                     min_cycles=self.min_cycles, max_cycles=self.max_cycles)
         step_emb_mlp_G_Z = self.mlp(step_emb_G_D)

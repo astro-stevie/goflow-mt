@@ -188,10 +188,22 @@ def evaluate_geometry(
     Dict[str, float]
     """
     # RMSE error
-    pred_pos_N_3, gt_pos_N_3 = pred_atom_index_align(data.smiles, data.pos[:, 1, :], data.pos_gen[-1])
+    # Handle both old format (data.pos with multiple dimensions) and NEB format (data.pos_N_3_I)
+    if hasattr(data, 'pos_N_3_I'):
+        # NEB format: use transition state (middle image) as ground truth
+        num_images = data.pos_N_3_I.shape[2]
+        ts_idx = num_images // 2
+        gt_pos_N_3_raw = data.pos_N_3_I[:, :, ts_idx]  # [N_atoms, 3]
+        pred_pos_raw = data.pos_gen_  # [N_atoms, 3] - already set to transition state in test_step
+    else:
+        # Old format
+        gt_pos_N_3_raw = data.pos[:, 1, :]
+        pred_pos_raw = data.pos_gen[-1]
+    
+    pred_pos_N_3, gt_pos_N_3 = pred_atom_index_align(data.smiles, gt_pos_N_3_raw, pred_pos_raw)
     rmse = rmsd_loss(pred_pos_N_3, gt_pos_N_3)
     # MAE error
-    pred_pos_aligned_mae = pred_atom_index_align_mad(data.smiles, data.pos[:, 1, :], data.pos_gen[-1])
+    pred_pos_aligned_mae = pred_atom_index_align_mad(data.smiles, gt_pos_N_3_raw, pred_pos_raw)
     mae = calc_DMAE(cdist(gt_pos_N_3, gt_pos_N_3), cdist(pred_pos_aligned_mae, pred_pos_aligned_mae))
 
     connectivity = build_connectivity(data.edge_index)

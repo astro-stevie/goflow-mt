@@ -13,7 +13,7 @@ callbacks:
     validation_loss_name: "val_loss"
     ema_log_name: "validation/ema_loss"
 
-logger: null  # Commented out to allow command-line logger override
+# logger: null  # Commented out to allow command-line logger override
 
 extras:
   ignore_warnings: False

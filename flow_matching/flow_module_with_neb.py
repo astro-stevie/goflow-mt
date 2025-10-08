@@ -7,7 +7,11 @@ from torch_geometric.data import Data, Batch
 import lightning.pytorch as pl
 from torchdiffeq import odeint
 
-from flow_matching.utils import get_shortest_path_fast_batched_x_1, rmsd_loss, get_substruct_matches, get_min_dmae_match_torch_batch
+from flow_matching.utils import get_shortest_path_fast_batched_x_1, rmsd_loss, get_substruct_matches, get_min_dmae_match_torch_batch, kabsch_align_batched
+import numpy as np
+
+from gotennet.models.components.outputs import Atomwise3DOut
+from gotennet.models.representation.gotennet import GotenNet
 import numpy as np
 
 from gotennet.models.components.outputs import Atomwise3DOut
@@ -83,7 +87,7 @@ class FlowModule(pl.LightningModule):
         x_t_10_N_3 = []
         dx_dt_10_N_3 = []
         t_G_10 = []
-        neb_imgs_10 = []
+        neb_imgs_10_G = []
 
         for neb_idx in range(0, neb_img):
             x_1_N_3 = batch.pos_N_3_I[:, :, neb_idx]
@@ -99,13 +103,13 @@ class FlowModule(pl.LightningModule):
             x_t_10_N_3.append(x_t_N_3)
             dx_dt_10_N_3.append(dx_dt_N_3)
             t_G_10.append(t_G)
-            neb_imgs_10.append(torch.full((batch.num_graphs,), neb_idx, dtype=torch.long, device=self.device))
+            neb_imgs_10_G.append(torch.full((batch.num_graphs,), neb_idx, dtype=torch.long, device=self.device))
 
         # Stack all results
         x_t_I_N_3 = torch.stack(x_t_10_N_3)
         dx_dt_I_N_3 = torch.stack(dx_dt_10_N_3)
         t_I_G = torch.stack(t_G_10)
-        neb_imgs_I_G = torch.stack(neb_imgs_10)
+        neb_imgs_I_G = torch.stack(neb_imgs_10_G)
 
         return x_t_I_N_3, dx_dt_I_N_3, t_I_G, neb_imgs_I_G
 
@@ -124,10 +128,13 @@ class FlowModule(pl.LightningModule):
         for i in range(num_images):
             # Extract data for this NEB image
             x_t_N_3 = x_t_I_N_3[i] 
-            t_G = t_I_G[i]  
-            neb_idx_G = neb_img_I_G[i]
+            t_G = t_I_G[i]  # Shape: [num_graphs, 1]
+            neb_idx_G = neb_img_I_G[i]  # Shape: [num_graphs]
             
-            h_N_D, X_N_L_D = self.representation(x_t_N_3, t_G, batch, neb_idx_G)
+            # Flatten t_G for time embedding (expects 1D tensor)
+            t_G_flat = t_G.flatten()  # Shape: [num_graphs]
+            
+            h_N_D, X_N_L_D = self.representation(x_t_N_3, t_G_flat, batch, neb_idx_G)
             atom_N_3 = self.atomwise_3D_out_layer(h_N_D, X_N_L_D[:, :3, :])
 
             atom_I_N_3.append(atom_N_3)
@@ -150,63 +157,73 @@ class FlowModule(pl.LightningModule):
         torch.manual_seed(self.seed)
         np.random.seed(self.seed)
         
+        # Get NEB dimensions from data
+        num_atoms, dim, num_neb_images = batch.pos_N_3_I.shape
+
         t_T = torch.linspace(0, 1, steps=self.num_steps, device=self.device)
 
         def ode_func(t, x_t_N_3):
-            t_G = torch.tensor([t] * batch.num_graphs, device=self.device)
-            model_forces_N_3 = self.model_output_with_neb(x_t_N_3, batch, t_G)
-            return model_forces_N_3
+            t_I_G = torch.full((num_neb_images, batch.num_graphs, 1), t, device=self.device)
+            neb_imgs_I_G = torch.arange(num_neb_images, device=self.device).unsqueeze(1).expand(-1, batch.num_graphs)
+            model_forces_I_N_3 = self.model_output_with_neb(x_t_N_3, batch, t_I_G, neb_imgs_I_G)
+            return model_forces_I_N_3
 
         # Generate #num_samples trajectories for batch
-        pos_gen_traj_S_T_N_3 = torch.zeros((self.num_samples, self.num_steps, batch.num_nodes, 3), device=self.device)
+        pos_gen_traj_S_T_I_N_3 = torch.zeros((self.num_samples, self.num_steps, num_neb_images, batch.num_nodes, 3), device=self.device)
         for i in range(self.num_samples):
             if self.seed is not None:
                 torch.manual_seed(self.seed + i)
-            pos_init_N_3 = torch.randn_like(batch.pos[:, 1, :], device=self.device)
-            pos_gen_traj_S_T_N_3[i, ...] = odeint(ode_func, pos_init_N_3, t_T, method='euler')
+            pos_init_I_N_3 = torch.randn((num_neb_images, batch.num_nodes, 3), device=self.device)
+            pos_gen_traj_S_T_I_N_3[i, ...] = odeint(ode_func, pos_init_I_N_3, t_T, method='euler')
 
         for j, data in enumerate(batch.to_data_list()):
             # Get single molecule positions from sampled trajectories
             mask = (batch.batch == j).cpu()
-            pos_gen_traj_S_T_Nm_3 = pos_gen_traj_S_T_N_3[:, :, mask]
             
-            pos_gen_traj_S_T_Nm_3 = self.align_and_rotate_samples(data, pos_gen_traj_S_T_Nm_3)
+            # Store results for each NEB image
+            data.pos_gen_neb = []
+            
+            for neb_idx in range(num_neb_images):
+                # Extract trajectory for this NEB image: [Samples, Time, Nm_atoms, 3]
+                pos_gen_traj_S_T_Nm_3 = pos_gen_traj_S_T_I_N_3[:, :, neb_idx, mask, :]
+                
+                # Use ground truth from corresponding NEB image for alignment
+                pos_gt_Nm_3 = data.pos_N_3_I[:, :, neb_idx].T  # Convert to [Nm_atoms, 3]
+                
+                # Align and rotate samples for this NEB image
+                pos_gen_traj_S_T_Nm_3, _ = self.align_and_rotate_samples(data, pos_gen_traj_S_T_Nm_3)
 
-            # -------------------------- START: Aggregate the S samples --------------------------
-            pos_aggr_Nm_3 = torch.median(pos_gen_traj_S_T_Nm_3[:, -1, :, :], dim=0).values
-            distances_Sv = torch.linalg.vector_norm(pos_gen_traj_S_T_Nm_3[:, -1, :, :] - pos_aggr_Nm_3, dim=(1, 2))
-            pos_best_T_Nm_3 = pos_gen_traj_S_T_Nm_3[torch.argmin(distances_Sv)]
-            # -------------------------- END: Aggregate the S samples --------------------------
+                # -------------------------- START: Aggregate the S samples --------------------------
+                pos_aggr_Nm_3 = torch.median(pos_gen_traj_S_T_Nm_3[:, -1, :, :], dim=0).values
+                distances_Sv = torch.linalg.vector_norm(pos_gen_traj_S_T_Nm_3[:, -1, :, :] - pos_aggr_Nm_3, dim=(1, 2))
+                pos_best_T_Nm_3 = pos_gen_traj_S_T_Nm_3[torch.argmin(distances_Sv)]
+                # -------------------------- END: Aggregate the S samples --------------------------
 
-            data.pos_gen = pos_best_T_Nm_3
+                data.pos_gen_neb.append(pos_best_T_Nm_3)
+            
+            # Convert to tensor: [Images, Time, Nm_atoms, 3]
+            data.pos_gen_neb_I_T_Nm_3 = torch.stack(data.pos_gen_neb, dim=0)
+            
+            # Transition state is typically at the middle of the pathway (image 4 or 5 out of 0-9)
+            ts_idx = num_neb_images // 2  # This gives index 5 for 10 images (0-9)
+            data.pos_gen_ = data.pos_gen_neb_I_T_Nm_3[ts_idx, -1, :, :]  # TS image, last time step
+            
+            # Also set the format expected by the callback for compatibility
+            data.pos_gen = [data.pos_gen_neb_I_T_Nm_3[ts_idx, -1, :, :]]  # Wrap in list so [-1] works
+            
             self.results_R.append(data.to("cpu"))
 
-    def align_and_rotate_samples(self, data, pos_gen_traj_S_T_Nm_3):
-        """
-        For each molecule we sample the TS S times. 
-        Do substructure matching, and align (w. Kabsch) to the GT.
-        """
-        pos_gt_Nm_3 = data.pos[:, 1, :]
+    def align_and_rotate_samples(self, data, pos_gen_S_T_Nm_3: torch.Tensor):
+        """Align and rotate trajectory samples using the last time step"""
+        # Use only the last time step for alignment
+        pos_gen_S_Nm_3 = pos_gen_S_T_Nm_3[:, -1, :, :]  # [Samples, Nm_atoms, 3]
         
-        # Substructure matching (batched for S)
-        matches = get_substruct_matches(data.smiles)
-        match_Sv_Nm = get_min_dmae_match_torch_batch(matches, pos_gt_Nm_3, pos_gen_traj_S_T_Nm_3[:, -1, :, :])
-        pos_gen_traj_S_T_Nm_3[:,-1,:,:] = torch.gather(pos_gen_traj_S_T_Nm_3[:,-1,:,:], 1, match_Sv_Nm.unsqueeze(-1).expand(-1,-1,3))
+        aligned_S_Nm_3, rmsd_S = kabsch_align_batched(data.pos, pos_gen_S_Nm_3)
         
-        # Kabsch rotation
-        S = pos_gen_traj_S_T_Nm_3.shape[0]
-        Nm = pos_gen_traj_S_T_Nm_3.shape[2]
-        # This is a trick to make the batched rotation to the GT molecule easy
-        data.batch = torch.arange(S, device=self.device).repeat_interleave(Nm)
-        # Repeat GT pos S times (have to rotate each sample to it)
-        pos_gt_SNm_3 = pos_gt_Nm_3.repeat(S, 1)
-        # Reshape [S, Nm] nodes to single S*Nm dimension. Makes batched rotation possible.
-        pos_gen_SNm_3 = pos_gen_traj_S_T_Nm_3[:,-1,:,:].reshape(S*Nm, 3)
-        pos_gen_aligned_SNm_3 = get_shortest_path_fast_batched_x_1(pos_gt_SNm_3, pos_gen_SNm_3, data)
-        pos_gen_aligned_S_Nm_3 = pos_gen_aligned_SNm_3.reshape(S, Nm, 3)
-        pos_gen_traj_S_T_Nm_3[:,-1,:,:] = pos_gen_aligned_S_Nm_3
+        # Copy aligned positions back to the trajectory
+        pos_gen_S_T_Nm_3[:, -1, :, :] = aligned_S_Nm_3
         
-        return pos_gen_traj_S_T_Nm_3
+        return pos_gen_S_T_Nm_3, rmsd_S.cpu().numpy()
 
 
     def configure_optimizers(self) -> Tuple[List[torch.optim.Optimizer], List[Dict]]:

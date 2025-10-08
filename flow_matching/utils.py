@@ -334,3 +334,56 @@ def get_min_dmae_match_torch_batch(matches_M_N, pos_gt_N_3, pos_pred_S_N_3, mape
     best_matches_S_N = matches_M_N[best_idx_S]
     
     return best_matches_S_N
+
+
+@torch.no_grad()
+def kabsch_align_batched(x0_N_3: torch.Tensor, x1_S_N_3: torch.Tensor):
+    """
+    Align each moving sample x1_S_N_3[s] onto fixed target x0_N_3 via Kabsch.
+
+    Args:
+        x0_N_3: (N, 3)   fixed reference (Q)
+        x1_S_N_3: (S, N, 3) moving set (P_s)
+
+    Returns:
+        x1_aligned_S_N_3: (S, N, 3)
+        rmsd_S:           (S,) tensor of per-sample RMSD
+    """
+    assert x0_N_3.dim() == 2 and x0_N_3.size(-1) == 3
+    assert x1_S_N_3.dim() == 3 and x1_S_N_3.size(-1) == 3
+    S, N, _ = x1_S_N_3.shape
+    dtype  = x0_N_3.dtype
+
+    # 1) Center both sets
+    x0c = x0_N_3.mean(0, keepdim=True)                # (1,3)
+    X0  = x0_N_3 - x0c                                # (N,3)
+    x1c_S_1_3 = x1_S_N_3.mean(1, keepdim=True)        # (S,1,3)
+    X1  = x1_S_N_3 - x1c_S_1_3                        # (S,N,3)
+
+    # 2) Batched cross-covariance: M_s = X0^T @ X1_s -> (S,3,3)
+    # Use expand + batched matmul (no copy of X0 needed).
+    X0_T = X0.transpose(0, 1)                         # (3,N)
+    M_S_3_3 = X0_T.expand(S, -1, -1) @ X1             # (S,3,3)
+
+    # 3) Batched SVD
+    U, _, Vh = torch.linalg.svd(M_S_3_3)              # U, Vh: (S,3,3)
+    V = Vh.transpose(-2, -1)                          # (S,3,3)
+    Ut = U.transpose(-2, -1)                          # (S,3,3)
+
+    # 4) Reflection fix: enforce det(R)=+1
+    # det(V @ U^T) < 0 -> flip the last column of V
+    det_VUt = torch.det(V @ Ut)                       # (S,)
+    flip = (det_VUt < 0).to(dtype)                    # 0 or 1
+    # Multiply last column of V by -1 where needed
+    V_corr = V.clone()
+    V_corr[..., :, -1] *= (1 - 2*flip).unsqueeze(-1)  # +1 or -1
+
+    # 5) Rotation and alignment
+    R = V_corr @ Ut                                   # (S,3,3)
+    x1_aligned_S_N_3 = (X1 @ R) + x0c.unsqueeze(0)    # (S,N,3)
+
+    # 6) Per-sample RMSD
+    diff = x1_aligned_S_N_3 - x0_N_3.unsqueeze(0)     # (S,N,3)
+    rmsd_S = diff.pow(2).mean(dim=(1,2)).sqrt()       # (S,)
+
+    return x1_aligned_S_N_3, rmsd_S
