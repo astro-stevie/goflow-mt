@@ -26,10 +26,13 @@ trainer:
   detect_anomaly: true
 
 data:
-  data_file: ./data/T1X/data.pkl
+  data_file: ./data/T1X/data_inr.pkl
   split_path: ./data/T1X/splits
-  split_file: split.pkl
+  split_file: split_inr.pkl
   batch_size: 4  # Small batch for debugging
+  num_workers: 0
+  pin_memory: False
+  multiprocessing_context: null
 
 model:
   num_steps: 5  # Fewer ODE steps for speed

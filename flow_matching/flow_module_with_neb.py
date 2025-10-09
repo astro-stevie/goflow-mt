@@ -118,6 +118,11 @@ class FlowModule(pl.LightningModule):
 
         atom_I_N_3 = self.model_output_with_neb(x_t_I_N_3, batch, t_I_G, neb_img_I_G)
 
+        # Optional: Weight loss by proximity to transition state if ts_idx is available
+        if hasattr(batch, 'ts_idx'):
+            # TODO: Implement TS-weighted loss when rmsd_loss supports per-sample losses
+            pass
+        
         return rmsd_loss(atom_I_N_3, dx_dt_I_N_3)
 
     def model_output_with_neb(self, x_t_I_N_3, batch: Data, t_I_G: Tensor, neb_img_I_G: Tensor) -> Tensor:
@@ -204,12 +209,21 @@ class FlowModule(pl.LightningModule):
             # Convert to tensor: [Images, Time, Nm_atoms, 3]
             data.pos_gen_neb_I_T_Nm_3 = torch.stack(data.pos_gen_neb, dim=0)
             
-            # Transition state is typically at the middle of the pathway (image 4 or 5 out of 0-9)
-            ts_idx = num_neb_images // 2  # This gives index 5 for 10 images (0-9)
+            if hasattr(batch, 'ts_idx'):
+                if isinstance(batch.ts_idx, (list, tuple)):
+                    ts_idx = batch.ts_idx[j]
+                else:
+                    ts_idx = batch.ts_idx[j] if len(batch.ts_idx.shape) > 0 else batch.ts_idx.item()
+            else:
+                ts_idx = num_neb_images // 2  # Fallback to middle
+                
             data.pos_gen_ = data.pos_gen_neb_I_T_Nm_3[ts_idx, -1, :, :]  # TS image, last time step
             
             # Also set the format expected by the callback for compatibility
             data.pos_gen = [data.pos_gen_neb_I_T_Nm_3[ts_idx, -1, :, :]]  # Wrap in list so [-1] works
+            
+            # Store the actual TS index used for analysis
+            data.ts_idx_used = ts_idx
             
             self.results_R.append(data.to("cpu"))
 

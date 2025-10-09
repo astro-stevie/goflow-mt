@@ -17,6 +17,12 @@ echo "Working directory: $(pwd)"
 # Use the trained checkpoint for testing only
 CHECKPOINT_PATH="logs/train_neb_full_298844/runs/2025-10-07_18-50-32/checkpoints/last.ckpt"
 
+# Optional performance overrides (can be set in environment before sbatch)
+# Example: export NUM_WORKERS=6 PIN_MEMORY=true MP_CTX=spawn
+NUM_WORKERS=${NUM_WORKERS:-2}
+PIN_MEMORY=${PIN_MEMORY:-true}
+MP_CTX=${MP_CTX:-spawn}
+
 if [ -f "$CHECKPOINT_PATH" ]; then
     echo "Found checkpoint: $CHECKPOINT_PATH"
     
@@ -34,7 +40,10 @@ if [ -f "$CHECKPOINT_PATH" ]; then
         train=false \
         test=true \
         ckpt_path="$CHECKPOINT_PATH" \
-        custom_model_weight_path=null
+        custom_model_weight_path=null \
+        data.num_workers=${NUM_WORKERS} \
+        data.pin_memory=${PIN_MEMORY} \
+        data.multiprocessing_context=${MP_CTX}
         
     echo "NEB testing experiment complete!"
     echo "Check logs at: /home/stephg/goflow/logs/test_neb_full_${SLURM_JOB_ID}.out"

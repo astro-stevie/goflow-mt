@@ -39,7 +39,8 @@ train: True
 # evaluate on test set, using best model weights achieved during training
 # lightning chooses best weights based on the metric specified in checkpoint callback
 test: True
-custom_model_weight_path: logs/eval/runs/2025-04-08_14-23-27/checkpoints/epoch_347.ckpt
+# Avoid hardcoding an evaluation checkpoint path so command-line ckpt_path overrides work.
+custom_model_weight_path: null
 
 # simply provide checkpoint path to resume training
 ckpt_path: null
@@ -50,4 +51,4 @@ model:
   seed: ${seed}
   
 data:
-  data_file: data.pkl
+  data_file: data_inr.pkl

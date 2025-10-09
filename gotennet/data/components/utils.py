@@ -24,7 +24,7 @@ class ConformationDataset(Dataset):
         # Create a mapping from rxn_index to the data object
         rxn_index_to_data = {}
         for data_obj in all_data:
-            rxn_index_to_data[data_obj.rxn_index] = data_obj
+            rxn_index_to_data[data_obj.rxn_idx] = data_obj
         
         # Get data by the provided rxn_indices
         self.data = [rxn_index_to_data[idx] for idx in data_indices]

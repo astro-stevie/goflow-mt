@@ -190,9 +190,16 @@ def evaluate_geometry(
     # RMSE error
     # Handle both old format (data.pos with multiple dimensions) and NEB format (data.pos_N_3_I)
     if hasattr(data, 'pos_N_3_I'):
-        # NEB format: use transition state (middle image) as ground truth
-        num_images = data.pos_N_3_I.shape[2]
-        ts_idx = num_images // 2
+        # NEB format: use actual transition state index if available
+        if hasattr(data, 'ts_idx_used'):
+            ts_idx = data.ts_idx_used
+        elif hasattr(data, 'ts_idx'):
+            ts_idx = data.ts_idx if isinstance(data.ts_idx, int) else data.ts_idx.item()
+        else:
+            # Fallback to middle image
+            num_images = data.pos_N_3_I.shape[2]
+            ts_idx = num_images // 2
+            
         gt_pos_N_3_raw = data.pos_N_3_I[:, :, ts_idx]  # [N_atoms, 3]
         pred_pos_raw = data.pos_gen_  # [N_atoms, 3] - already set to transition state in test_step
     else:
