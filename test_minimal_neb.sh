@@ -6,7 +6,7 @@
 echo "Starting NEB test-only run using checkpoint (minimal config)..."
 
 # Use the latest checkpoint for testing only
-CHECKPOINT_PATH="logs/train_neb_full_298844/2025-10-07_18-50-32/checkpoints/last.ckpt"
+CHECKPOINT_PATH="logs/train_neb_full_298844/runs/2025-10-07_18-50-32/checkpoints/last.ckpt"
 
 if [ -f "$CHECKPOINT_PATH" ]; then
     echo "Found checkpoint: $CHECKPOINT_PATH"
@@ -30,5 +30,5 @@ if [ -f "$CHECKPOINT_PATH" ]; then
 else
     echo "Error: Checkpoint not found at $CHECKPOINT_PATH"
     echo "Available checkpoints:"
-    ls -la logs/train_neb_full_298844/2025-10-07_18-50-32/checkpoints/
+    ls -la logs/train_neb_full_298844/runs/2025-10-07_18-50-32/checkpoints/
 fi

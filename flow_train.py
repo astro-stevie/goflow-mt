@@ -6,6 +6,8 @@ from lightning.pytorch.loggers import Logger
 import hydra
 from omegaconf import DictConfig
 from flow_matching.flow_module import FlowModule
+import torch.multiprocessing as _tmp_mp
+import resource
 
 from gotennet.utils import RankedLogger, instantiate_callbacks, instantiate_loggers, log_hyperparameters
 
@@ -17,6 +19,24 @@ def train_flow(cfg: DictConfig):
     #################### PyTorch Specifics ####################
     torch.set_float32_matmul_precision(cfg.get("matmul_precision", "high"))
     if cfg.get("seed"): L.seed_everything(cfg.seed, workers=True)
+
+    # Try to select a safer sharing strategy to avoid running out of file descriptors
+    try:
+        _tmp_mp.set_sharing_strategy('file_system')
+        log.info(f"Set torch.multiprocessing sharing strategy to 'file_system'")
+    except Exception as e:
+        log.info(f"Could not set multiprocessing sharing strategy: {e}")
+
+    # Raise the soft limit on open file descriptors (if permitted)
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        target = max(soft, 4096)
+        target = min(target, hard)
+        if target > soft:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+            log.info(f"Increased RLIMIT_NOFILE soft limit: {soft} -> {target}")
+    except Exception as e:
+        log.info(f"Could not increase RLIMIT_NOFILE: {e}")
 
     #################### Load Modules for Data/Model/Callback/Logging ####################
     log.info(f"Instantiating datamodule <{cfg.data._target_}>")

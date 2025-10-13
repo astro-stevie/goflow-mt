@@ -1,7 +1,7 @@
 #!/bin/bash
 
-#SBATCH --partition=GPU-a100s
-#SBATCH --gres=gpu:a100s:1
+#SBATCH --partition=GPU-a100
+#SBATCH --gres=gpu:a100:1
 #SBATCH --nodes=1
 #SBATCH --job-name=test_neb
 #SBATCH --output=%x-%j.out
@@ -20,7 +20,7 @@ CHECKPOINT_PATH="logs/train_neb_full_298844/runs/2025-10-07_18-50-32/checkpoints
 # Optional performance overrides (can be set in environment before sbatch)
 # Example: export NUM_WORKERS=6 PIN_MEMORY=true MP_CTX=spawn
 NUM_WORKERS=${NUM_WORKERS:-2}
-PIN_MEMORY=${PIN_MEMORY:-true}
+PIN_MEMORY=${PIN_MEMORY:-false}
 MP_CTX=${MP_CTX:-spawn}
 
 if [ -f "$CHECKPOINT_PATH" ]; then
