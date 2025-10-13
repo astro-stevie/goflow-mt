@@ -42,6 +42,7 @@ class FlowModule(pl.LightningModule):
             lr_warmup_steps: int = 0,
             schedule_free: bool = False,
             use_ema: bool = False,
+            neb_img_subset: Optional[list] = None,
             **kwargs
     ):
         super().__init__()
@@ -77,19 +78,31 @@ class FlowModule(pl.LightningModule):
 
         # save results in test_step
         self.results_R = []
+        self.neb_img_subset = neb_img_subset
     
     ### New methods for NEB image conditioning
     
     def get_perturbed_flow_point_and_time_with_neb(self, batch: Data):
 
         num_atoms, dim, neb_img = batch.pos_N_3_I.shape
+        neb_img_subset = self.neb_img_subset # Determine which NEB images to use
+
+        # Default: use only the transition state image if available
+        if neb_img_subset is None:
+            neb_img_subset = batch.ts_idx if hasattr(batch, 'ts_idx') else list(range(0, neb_img))
+        if isinstance(neb_img_subset, str):
+            if neb_img_subset.lower() in ['all', 'auto']:
+                neb_img_subset = list(range(0, neb_img))
+            else:
+                raise ValueError(f"Invalid neb_img_subset string: {neb_img_subset}")
+
         # Collect all flow data for all NEB images
         x_t_10_N_3 = []
         dx_dt_10_N_3 = []
         t_G_10 = []
         neb_imgs_10_G = []
 
-        for neb_idx in range(0, neb_img):
+        for neb_idx in neb_img_subset:
             x_1_N_3 = batch.pos_N_3_I[:, :, neb_idx]
             x_0_N_3 = torch.randn_like(x_1_N_3, device=self.device)
 

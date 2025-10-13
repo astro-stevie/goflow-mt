@@ -16,7 +16,6 @@ defaults:
   - experiment: flow_neb_test
   
   - hparams_search: null
-
   # optional local config for machine/user specific settings
   # it's optional since it doesn't need to exist and is excluded from version control
   - optional local: default

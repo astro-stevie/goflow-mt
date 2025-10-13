@@ -1,0 +1,9 @@
+# @package _global_
+
+defaults:
+  - override /model: flow_neb
+  - override /data: t1x
+
+model:
+  representation:
+    n_atom_basis: 344 
