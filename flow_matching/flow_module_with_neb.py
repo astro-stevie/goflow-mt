@@ -87,15 +87,49 @@ class FlowModule(pl.LightningModule):
         num_atoms, dim, neb_img = batch.pos_N_3_I.shape
         neb_img_subset = self.neb_img_subset # Determine which NEB images to use
 
-        # Default: use only the transition state image if available
-        if neb_img_subset is None:
-            neb_img_subset = batch.ts_idx if hasattr(batch, 'ts_idx') else list(range(0, neb_img))
+        if neb_img_subset is None or len(neb_img_subset) == 0:
+            if hasattr(batch, 'ts_idx'):
+                ts = batch.ts_idx
+                # Normalize torch tensors / numpy arrays / lists into a list of Python ints
+                try:
+                    if hasattr(ts, 'tolist'):
+                        ts_list = ts.tolist()
+                    else:
+                        ts_list = list(ts)
+                except Exception:
+                    # Scalar case such as tensor(5) or np.int64(5)
+                    ts_list = [int(ts)]
+
+                # If ts_list is a scalar converted to a single int, make it a list
+                if not isinstance(ts_list, (list, tuple)):
+                    ts_list = [ts_list]
+
+                # Flatten nested lists (e.g., [[5]]), coerce elements to int, deduplicate and sort
+                flat = []
+                for el in ts_list:
+                    if isinstance(el, (list, tuple)):
+                        flat.extend([int(x) for x in el])
+                    else:
+                        flat.append(int(el))
+
+                # Use unique sorted set of TS indices across the batch
+                neb_img_subset = sorted(set(flat))
+            else:
+                neb_img_subset = list(range(0, neb_img))
+
+        # Accept string sentinel 'all' or 'auto'
         if isinstance(neb_img_subset, str):
             if neb_img_subset.lower() in ['all', 'auto']:
                 neb_img_subset = list(range(0, neb_img))
             else:
                 raise ValueError(f"Invalid neb_img_subset string: {neb_img_subset}")
 
+        # If user provided a list/tuple, coerce and filter indices
+        if isinstance(neb_img_subset, (list, tuple)):
+            neb_img_subset = [int(x) for x in neb_img_subset]
+            neb_img_subset = [i for i in neb_img_subset if 0 <= i < neb_img]
+
+        print(f"Using NEB images: {neb_img_subset}")
         # Collect all flow data for all NEB images
         x_t_10_N_3 = []
         dx_dt_10_N_3 = []
