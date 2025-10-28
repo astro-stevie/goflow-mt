@@ -23,8 +23,39 @@ class ConformationDataset(Dataset):
         
         # Create a mapping from rxn_index to the data object
         rxn_index_to_data = {}
-        for data_obj in all_data:
-            rxn_index_to_data[data_obj.rxn_idx] = data_obj
+        for i, data_obj in enumerate(all_data):
+            # Try common attribute names that might store the reaction index
+            key = None
+            for attr in ("rxn_idx", "rxn_index", "idx"):
+                if hasattr(data_obj, attr):
+                    try:
+                        val = getattr(data_obj, attr)
+                        # If it's a tensor, convert to python int
+                        if hasattr(val, "item"):
+                            key = int(val.item())
+                        else:
+                            key = int(val)
+                    except Exception:
+                        # If conversion failed, ignore and keep trying
+                        key = None
+                    break
+            if key is None:
+                # Fallback: use the list index
+                key = i
+                rank_zero_warn(
+                    f"ConformationDataset: data object at position {i} has no 'rxn_idx'/'rxn_index'/'idx' attribute — using list index {i} as key."
+                )
+            if key in rxn_index_to_data:
+                rank_zero_warn(f"ConformationDataset: duplicate rxn index {key} found; overwriting previous entry.")
+            rxn_index_to_data[key] = data_obj
+
+        # Validate requested indices are present
+        missing = [idx for idx in data_indices if idx not in rxn_index_to_data]
+        if len(missing) > 0:
+            raise MissingLabelException(
+                f"Requested rxn_indices not found in data file: {missing}. "
+                f"Available keys (sample): {list(rxn_index_to_data.keys())[:20]}"
+            )
         
         # Get data by the provided rxn_indices
         self.data = [rxn_index_to_data[idx] for idx in data_indices]

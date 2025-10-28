@@ -8,6 +8,9 @@
 
 # Submit with: sbatch test_neb.sh
 
+# Activate environment
+source .venv/bin/activate
+
 echo "Starting NEB testing experiment..."
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURM_NODELIST"

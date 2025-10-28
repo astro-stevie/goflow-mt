@@ -87,57 +87,52 @@ class FlowModule(pl.LightningModule):
         num_atoms, dim, neb_img = batch.pos_N_3_I.shape
         neb_img_subset = self.neb_img_subset # Determine which NEB images to use
 
-        if neb_img_subset is None or len(neb_img_subset) == 0:
-            if hasattr(batch, 'ts_idx'):
-                ts = batch.ts_idx
-                # Normalize torch tensors / numpy arrays / lists into a list of Python ints
-                try:
-                    if hasattr(ts, 'tolist'):
-                        ts_list = ts.tolist()
-                    else:
-                        ts_list = list(ts)
-                except Exception:
-                    # Scalar case such as tensor(5) or np.int64(5)
-                    ts_list = [int(ts)]
-
-                # If ts_list is a scalar converted to a single int, make it a list
-                if not isinstance(ts_list, (list, tuple)):
-                    ts_list = [ts_list]
-
-                # Flatten nested lists (e.g., [[5]]), coerce elements to int, deduplicate and sort
-                flat = []
-                for el in ts_list:
-                    if isinstance(el, (list, tuple)):
-                        flat.extend([int(x) for x in el])
-                    else:
-                        flat.append(int(el))
-
-                # Use unique sorted set of TS indices across the batch
-                neb_img_subset = sorted(set(flat))
-            else:
-                neb_img_subset = list(range(0, neb_img))
-
-        # Accept string sentinel 'all' or 'auto'
+         # Accept string sentinel 'all' or 'auto'
         if isinstance(neb_img_subset, str):
             if neb_img_subset.lower() in ['all', 'auto']:
                 neb_img_subset = list(range(0, neb_img))
             else:
                 raise ValueError(f"Invalid neb_img_subset string: {neb_img_subset}")
+    
+            
+        # Case 1: Empty subset means use only TS (one image per reaction)
+        if neb_img_subset is None or len(neb_img_subset) == 0:
+            # Get TS indices for each reaction in batch
+            if hasattr(batch, 'ts_idx'):
+                # ts_idx can be a tensor or list with one value per reaction
+                if isinstance(batch.ts_idx, (list, tuple)):
+                    ts_indices = batch.ts_idx
+                elif torch.is_tensor(batch.ts_idx):
+                    if batch.ts_idx.numel() == 1:
+                        # Single value for all reactions
+                        ts_indices = [batch.ts_idx.item()] * batch.num_graphs
+                    else:
+                        # One value per reaction
+                        ts_indices = batch.ts_idx.tolist()
+                else:
+                    ts_indices = [batch.ts_idx] * batch.num_graphs
+            else:
+                # Fallback to middle image
+                ts_indices = [neb_img // 2] * batch.num_graphs
 
-        # If user provided a list/tuple, coerce and filter indices
-        if isinstance(neb_img_subset, (list, tuple)):
-            neb_img_subset = [int(x) for x in neb_img_subset]
-            neb_img_subset = [i for i in neb_img_subset if 0 <= i < neb_img]
+            # Verify we have exactly one TS index per reaction
+            assert len(ts_indices) == batch.num_graphs, \
+                f"Expected {batch.num_graphs} TS indices, got {len(ts_indices)}"
 
-        print(f"Using NEB images: {neb_img_subset}")
-        # Collect all flow data for all NEB images
-        x_t_10_N_3 = []
-        dx_dt_10_N_3 = []
-        t_G_10 = []
-        neb_imgs_10_G = []
+            # Extract positions for each reaction's TS
+            x_1_N_3_list = []
+            start_idx = 0
+            for graph_idx, ts_idx in enumerate(ts_indices):
+                # Find atoms belonging to this reaction
+                mask = batch.batch == graph_idx
+                num_atoms_in_graph = mask.sum().item()
+                end_idx = start_idx + num_atoms_in_graph
 
-        for neb_idx in neb_img_subset:
-            x_1_N_3 = batch.pos_N_3_I[:, :, neb_idx]
+                # Extract TS positions for this reaction
+                x_1_N_3_list.append(batch.pos_N_3_I[start_idx:end_idx, :, ts_idx])
+                start_idx = end_idx
+
+            x_1_N_3 = torch.cat(x_1_N_3_list, dim=0)
             x_0_N_3 = torch.randn_like(x_1_N_3, device=self.device)
 
             t_G = torch.rand(batch.num_graphs, 1, device=self.device)
@@ -147,16 +142,39 @@ class FlowModule(pl.LightningModule):
             x_t_N_3 = (1 - t_N) * x_0_N_3 + t_N * x_1_aligned_N_3
             dx_dt_N_3 = x_1_aligned_N_3 - x_0_N_3
 
-            x_t_10_N_3.append(x_t_N_3)
-            dx_dt_10_N_3.append(dx_dt_N_3)
-            t_G_10.append(t_G)
-            neb_imgs_10_G.append(torch.full((batch.num_graphs,), neb_idx, dtype=torch.long, device=self.device))
+            # Return with single image dimension (I=1)
+            x_t_I_N_3 = x_t_N_3.unsqueeze(0)  # [1, N, 3]
+            dx_dt_I_N_3 = dx_dt_N_3.unsqueeze(0)  # [1, N, 3]
+            t_I_G = t_G.unsqueeze(0)  # [1, G, 1]
+            neb_imgs_I_G = torch.tensor(ts_indices, device=self.device).unsqueeze(0)  # [1, G]
 
-        # Stack all results
-        x_t_I_N_3 = torch.stack(x_t_10_N_3)
-        dx_dt_I_N_3 = torch.stack(dx_dt_10_N_3)
-        t_I_G = torch.stack(t_G_10)
-        neb_imgs_I_G = torch.stack(neb_imgs_10_G)
+        else:
+            # Collect all flow data for all NEB images
+            x_t_I_N_3 = []
+            dx_dt_I_N_3 = []
+            t_G_I = []
+            neb_imgs_I_G = []
+            for neb_idx in neb_img_subset:
+                x_1_N_3 = batch.pos_N_3_I[:, :, neb_idx]
+                x_0_N_3 = torch.randn_like(x_1_N_3, device=self.device)
+
+                t_G = torch.rand(batch.num_graphs, 1, device=self.device)
+                t_N = t_G[batch.batch]
+
+                x_1_aligned_N_3 = get_shortest_path_fast_batched_x_1(x_0_N_3, x_1_N_3, batch)
+                x_t_N_3 = (1 - t_N) * x_0_N_3 + t_N * x_1_aligned_N_3
+                dx_dt_N_3 = x_1_aligned_N_3 - x_0_N_3
+
+                x_t_I_N_3.append(x_t_N_3)
+                dx_dt_I_N_3.append(dx_dt_N_3)
+                t_G_I.append(t_G)
+                neb_imgs_I_G.append(torch.full((batch.num_graphs,), neb_idx, dtype=torch.long, device=self.device))
+
+            # Stack all results
+            x_t_I_N_3 = torch.stack(x_t_I_N_3)
+            dx_dt_I_N_3 = torch.stack(dx_dt_I_N_3)
+            t_I_G = torch.stack(t_G_I)
+            neb_imgs_I_G = torch.stack(neb_imgs_I_G)
 
         return x_t_I_N_3, dx_dt_I_N_3, t_I_G, neb_imgs_I_G
 

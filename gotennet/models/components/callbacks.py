@@ -4,6 +4,7 @@ import pickle
 from pathlib import Path
 from typing import Any, Dict, Optional
 import pandas as pd
+import csv
 
 import lightning.pytorch as L
 import torch
@@ -399,3 +400,79 @@ class EMALossCallback(L.Callback):
                 avg_loss = torch.min(torch.stack([avg_loss, self.ema * self.soft_beta]))
             self.ema = self.alpha * self.ema + (1 - self.alpha) * avg_loss
         pl_module.log(self.ema_log_name, self.ema, on_step=False, on_epoch=True)
+
+
+class TrainLossSpikeCallback(L.Callback):
+    """Record per-train-batch loss values to a CSV to help detect spikes and optionally alert.
+
+    Writes a CSV file named `train_batch_losses.csv` into the trainer log dir. If `threshold` is
+    provided the callback will emit a warning when a batch loss exceeds the threshold. Set
+    `alert_once=True` to only warn once per run per threshold breach.
+    """
+
+    def __init__(self, save_filename: str = "train_batch_losses.csv", threshold: float | None = None, alert_once: bool = False):
+        self.save_filename = save_filename
+        self.rows = []
+        self.threshold = float(threshold) if threshold is not None else None
+        self.alert_once = bool(alert_once)
+        self._alerts_emitted = set()
+
+    def _maybe_alert(self, trainer: Trainer, row: dict):
+        if self.threshold is None:
+            return
+        loss_val = row.get("loss")
+        if loss_val is None:
+            return
+        if loss_val > self.threshold:
+            key = (row.get("global_step"), row.get("epoch"), row.get("batch_idx"))
+            if self.alert_once and key in self._alerts_emitted:
+                return
+            log.warning(f"Train loss spike detected: loss={loss_val:.6f} at epoch={row.get('epoch')} batch={row.get('batch_idx')} global_step={row.get('global_step')}")
+            self._alerts_emitted.add(key)
+
+    def on_train_batch_end(self, trainer: Trainer, pl_module: L.LightningModule, outputs, batch, batch_idx: int, dataloader_idx: int = 0):
+        # outputs is typically the loss tensor returned by training_step
+        loss_val = None
+        try:
+            if isinstance(outputs, torch.Tensor):
+                loss_val = outputs.detach().cpu().item()
+            elif isinstance(outputs, dict) and "loss" in outputs:
+                # Some Lightning variants return {'loss': tensor, ...}
+                loss_val = outputs["loss"].detach().cpu().item()
+        except Exception:
+            loss_val = None
+
+        if loss_val is None:
+            return
+
+        row = {
+            "global_step": int(trainer.global_step),
+            "epoch": int(getattr(trainer, 'current_epoch', -1)),
+            "batch_idx": int(batch_idx),
+            "loss": float(loss_val),
+        }
+        self.rows.append(row)
+        # Possibly emit alert
+        try:
+            self._maybe_alert(trainer, row)
+        except Exception:
+            pass
+
+    def on_train_epoch_end(self, trainer: Trainer, pl_module: L.LightningModule):
+        # Write accumulated rows to CSV in the trainer log dir
+        try:
+            logdir = Path(trainer.log_dir if hasattr(trainer, 'log_dir') and trainer.log_dir else trainer.default_root_dir)
+            logdir.mkdir(parents=True, exist_ok=True)
+            out_path = logdir / self.save_filename
+            write_header = not out_path.exists()
+            with open(out_path, 'a', newline='') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=["global_step", "epoch", "batch_idx", "loss"])
+                if write_header:
+                    writer.writeheader()
+                for r in self.rows:
+                    writer.writerow(r)
+        except Exception as e:
+            log.info(f"Could not write train batch losses CSV: {e}")
+        finally:
+            # clear rows to avoid duplication across epochs
+            self.rows = []

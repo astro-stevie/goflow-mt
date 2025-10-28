@@ -8,6 +8,9 @@
 
 # Submit with: sbatch train_neb.sh
 
+# Activate environment
+source .venv/bin/activate
+
 echo "Starting NEB full training experiment..."
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURM_NODELIST"
@@ -20,7 +23,7 @@ uv run flow_train.py \
     model=flow_neb \
     data=t1x \
     trainer=gpu \
-    logger=wandb \
+    logger=[wandb,csv] \
     model.num_steps=25 \
     model.num_samples=50 \
     task_name=train_neb_TS_${SLURM_JOB_ID} \

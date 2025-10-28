@@ -617,7 +617,7 @@ class GotenNet(nn.Module):
         for l in self.eqff:
             l.reset_parameters()
 
-    def forward(self, x_t_N_3: Tensor, t_G: Tensor, inputs: Mapping[str, torch.Tensor], neb_image_idx: Optional[Tensor]) -> Tuple[
+    def forward(self, x_t_N_3: Tensor, t_G: Tensor, inputs: Mapping[str, torch.Tensor], neb_image_idx: Optional[Tensor] = None) -> Tuple[
         torch.Tensor, torch.Tensor]:
         """
         Compute atomic representations/embeddings.
