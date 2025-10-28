@@ -109,6 +109,7 @@ class FlowModule(pl.LightningModule):
                     else:
                         # One value per reaction
                         ts_indices = batch.ts_idx.tolist()
+                        print("ts_indices:", ts_indices)
                 else:
                     ts_indices = [batch.ts_idx] * batch.num_graphs
             else:

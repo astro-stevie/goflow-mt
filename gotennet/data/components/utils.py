@@ -29,15 +29,10 @@ class ConformationDataset(Dataset):
             for attr in ("rxn_idx", "rxn_index", "idx"):
                 if hasattr(data_obj, attr):
                     try:
-                        val = getattr(data_obj, attr)
-                        # If it's a tensor, convert to python int
-                        if hasattr(val, "item"):
-                            key = int(val.item())
-                        else:
-                            key = int(val)
+                        key = getattr(data_obj, attr)
                     except Exception:
-                        # If conversion failed, ignore and keep trying
-                        key = None
+                        rank_zero_warn(f"Could not extract {attr} from data object at position {i}")
+                        continue
                     break
             if key is None:
                 # Fallback: use the list index
