@@ -1,0 +1,39 @@
+# @package _global_
+
+defaults:
+  - override /data: t1x
+
+# Quick debugging setup for NEB implementation
+task_name: "neb_debug"
+
+callbacks:
+  ema_loss:
+    _target_: gotennet.models.components.callbacks.EMALossCallback
+    alpha: 0.99
+    validation_loss_name: "val_loss"
+    ema_log_name: "validation/ema_loss"
+
+# logger: null  # Commented out to allow command-line logger override
+
+extras:
+  ignore_warnings: False
+  enforce_tags: False
+
+trainer:
+  max_epochs: 2  # Just 2 epochs for quick testing
+  accelerator: cpu
+  devices: 1
+  detect_anomaly: true
+
+data:
+  data_file: ./data/T1X/data_inr.pkl
+  split_path: ./data/T1X/splits
+  split_file: split_inr.pkl
+  batch_size: 4  # Small batch for debugging
+  num_workers: 0
+  pin_memory: False
+  multiprocessing_context: null
+
+model:
+  num_steps: 5  # Fewer ODE steps for speed
+  num_samples: 1  # Single sample for debugging

@@ -36,3 +36,10 @@ test_and_save_after_training:
 
 #learning_rate_monitor:
 #  _target_: lightning.pytorch.callbacks.LearningRateMonitor
+
+callbacks:
+  train_loss_spike:
+    _target_: gotennet.models.components.callbacks.TrainLossSpikeCallback
+    save_filename: train_batch_losses.csv
+    threshold: 1.0
+    alert_once: true

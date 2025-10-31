@@ -2,3 +2,14 @@
 data/RDB7/processed_data/data.pkl
 uv.lock
 .rsyncignore
+
+# test files
+test-cases/
+logs/
+__pycache__/
+figures/
+test_local_neb.sh
+validate_neb.py
+wandb/
+neb_test_methods_proposed.py
+test_neb_integration.py

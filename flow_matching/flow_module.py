@@ -95,7 +95,7 @@ class FlowModule(pl.LightningModule):
         atom_N_3 = self.model_output(x_t_N_3, batch, t_G)
 
         return rmsd_loss(atom_N_3, dx_dt_N_3)
-
+    
     def model_output(self, x_t_N_3, batch: Data, t_G: Tensor) -> Tensor:
         h_N_D, X_N_L_D = self.representation(x_t_N_3, t_G, batch)
         atom_N_3 = self.atomwise_3D_out_layer(h_N_D, X_N_L_D[:, :3, :])
