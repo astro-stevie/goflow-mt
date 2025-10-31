@@ -1,7 +1,7 @@
 #!/bin/bash
 
-#SBATCH --partition=GPU-a100
-#SBATCH --gres=gpu:a100:1
+#SBATCH --partition=GPU-a100s
+#SBATCH --gres=gpu:a100s:1
 #SBATCH --nodes=1
 #SBATCH --job-name=test_neb
 #SBATCH --output=%x-%j.out
@@ -18,7 +18,7 @@ echo "GPU: $CUDA_VISIBLE_DEVICES"
 echo "Working directory: $(pwd)"
 
 # Use the trained checkpoint for testing only
-CHECKPOINT_PATH="logs/train_neb_full_298844/runs/2025-10-07_18-50-32/checkpoints/last.ckpt"
+CHECKPOINT_PATH="logs/train_neb_all_311800/runs/2025-10-30_13-02-02/checkpoints/last.ckpt"
 
 # Optional performance overrides (can be set in environment before sbatch)
 # Example: export NUM_WORKERS=6 PIN_MEMORY=true MP_CTX=spawn
@@ -38,20 +38,17 @@ if [ -f "$CHECKPOINT_PATH" ]; then
         logger=wandb \
         model.num_steps=25 \
         model.num_samples=50 \
-        task_name=test_neb_full_${SLURM_JOB_ID} \
+        task_name=test_neb_all_${SLURM_JOB_ID} \
         project=goflow-neb \
         train=false \
         test=true \
         ckpt_path="$CHECKPOINT_PATH" \
-        custom_model_weight_path=null \
-        data.num_workers=${NUM_WORKERS} \
-        data.pin_memory=${PIN_MEMORY} \
-        data.multiprocessing_context=${MP_CTX}
+        custom_model_weight_path=null
         
     echo "NEB testing experiment complete!"
-    echo "Check logs at: /home/stephg/goflow/logs/test_neb_full_${SLURM_JOB_ID}.out"
+    echo "Check logs at: /home/stephg/goflow/logs/test_neb_all_${SLURM_JOB_ID}.out"
 else
     echo "Error: Checkpoint not found at $CHECKPOINT_PATH"
     echo "Available checkpoints in directory:"
-    ls -la logs/train_neb_full_298844/runs/2025-10-07_18-50-32/checkpoints/ || echo "Directory not found"
+    ls -la logs/train_neb_all_311800/runs/2025-10-30_13-02-02/checkpoints/ || echo "Directory not found"
 fi

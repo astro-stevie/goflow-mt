@@ -99,22 +99,11 @@ class FlowModule(pl.LightningModule):
         if neb_img_subset is None or len(neb_img_subset) == 0:
             # Get TS indices for each reaction in batch
             if hasattr(batch, 'ts_idx'):
-                # ts_idx can be a tensor or list with one value per reaction
-                if isinstance(batch.ts_idx, (list, tuple)):
-                    ts_indices = batch.ts_idx
-                elif torch.is_tensor(batch.ts_idx):
-                    if batch.ts_idx.numel() == 1:
-                        # Single value for all reactions
-                        ts_indices = [batch.ts_idx.item()] * batch.num_graphs
-                    else:
-                        # One value per reaction
-                        ts_indices = batch.ts_idx.tolist()
-                        print("ts_indices:", ts_indices)
-                else:
-                    ts_indices = [batch.ts_idx] * batch.num_graphs
+                ts_indices = batch.ts_idx
             else:
                 # Fallback to middle image
                 ts_indices = [neb_img // 2] * batch.num_graphs
+                print("No ts_idx provided; using middle image for TS images:", ts_indices)
 
             # Verify we have exactly one TS index per reaction
             assert len(ts_indices) == batch.num_graphs, \
@@ -181,7 +170,7 @@ class FlowModule(pl.LightningModule):
 
     def train_val_step_with_neb(self, batch: Data) -> Tensor:
         x_t_I_N_3, dx_dt_I_N_3, t_I_G, neb_img_I_G = self.get_perturbed_flow_point_and_time_with_neb(batch)
-
+        
         atom_I_N_3 = self.model_output_with_neb(x_t_I_N_3, batch, t_I_G, neb_img_I_G)
 
         # Optional: Weight loss by proximity to transition state if ts_idx is available
@@ -196,22 +185,42 @@ class FlowModule(pl.LightningModule):
         num_images = neb_img_I_G.shape[0]  # Number of NEB images
         atom_I_N_3 = []
         
-        for i in range(num_images):
-            # Extract data for this NEB image
-            x_t_N_3 = x_t_I_N_3[i] 
-            t_G = t_I_G[i]  # Shape: [num_graphs, 1]
-            neb_idx_G = neb_img_I_G[i]  # Shape: [num_graphs]
-            
-            # Flatten t_G for time embedding (expects 1D tensor)
-            t_G_flat = t_G.flatten()  # Shape: [num_graphs]
-            
-            h_N_D, X_N_L_D = self.representation(x_t_N_3, t_G_flat, batch, neb_idx_G)
+        # Handle single-image case separately for detecting effects of NEB embedding
+        if num_images == 1:
+            # x_t_I_N_3 has shape [1, N, 3] in the single-image case; representation expects [N, 3]
+            if x_t_I_N_3.dim() == 3 and x_t_I_N_3.shape[0] == 1:
+                x_t_N_3 = x_t_I_N_3[0]
+            else:
+                x_t_N_3 = x_t_I_N_3.squeeze(0)
+
+            # t_I_G has shape [1, G, 1] -> use the first image's t_G and flatten to 1D
+            if t_I_G.dim() >= 2:
+                t_G_flat = t_I_G[0].flatten()
+            else:
+                t_G_flat = t_I_G.flatten()
+
+            h_N_D, X_N_L_D = self.representation(x_t_N_3, t_G_flat, batch)
             atom_N_3 = self.atomwise_3D_out_layer(h_N_D, X_N_L_D[:, :3, :])
+            # Return with an image dimension to match the multi-image return shape: [I=1, N, 3]
+            return atom_N_3.unsqueeze(0)
 
-            atom_I_N_3.append(atom_N_3)
+        else:
+            for i in range(num_images):
+                # Extract data for this NEB image
+                x_t_N_3 = x_t_I_N_3[i] 
+                t_G = t_I_G[i]  # Shape: [num_graphs, 1]
+                neb_idx_G = neb_img_I_G[i]  # Shape: [num_graphs]
+                
+                # Flatten t_G for time embedding (expects 1D tensor)
+                t_G_flat = t_G.flatten()  # Shape: [num_graphs]
+                
+                h_N_D, X_N_L_D = self.representation(x_t_N_3, t_G_flat, batch, neb_idx_G)
+                atom_N_3 = self.atomwise_3D_out_layer(h_N_D, X_N_L_D[:, :3, :])
 
-        # Stack results from all NEB images to match input structure
-        return torch.stack(atom_I_N_3, dim=0)
+                atom_I_N_3.append(atom_N_3)
+
+            # Stack results from all NEB images to match input structure
+            return torch.stack(atom_I_N_3, dim=0)
 
     def training_step(self, batch: Data, batch_idx: int) -> Tensor:
         loss = self.train_val_step_with_neb(batch)
