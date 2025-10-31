@@ -9,16 +9,10 @@ defaults:
   - logger: wandb
   - trainer: gpu
   - paths: default
-  - extras: default
   - hydra: default
   - _self_
 
   - experiment: flow3_neb
-  
-  - hparams_search: null
-  # optional local config for machine/user specific settings
-  # it's optional since it doesn't need to exist and is excluded from version control
-  - optional local: default
 
   # debugging config (enable through command line, e.g. `python train.py debug=default)
   - debug: null
@@ -34,7 +28,6 @@ tags: ["dev"]
 
 # set False to skip model training
 train: True
-
 # evaluate on test set, using best model weights achieved during training
 # lightning chooses best weights based on the metric specified in checkpoint callback
 test: True

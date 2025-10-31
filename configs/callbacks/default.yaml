@@ -1,11 +1,8 @@
 defaults:
-  - model_checkpoint
-  - early_stopping
-  - model_summary
-  - rich_progress_bar
   - _self_
 
 model_checkpoint:
+  _target_: lightning.pytorch.callbacks.ModelCheckpoint
   dirpath: ${paths.output_dir}/checkpoints
   filename: "epoch_{epoch:03d}"
   monitor: "validation/val_loss" # name of the logged metric which determines when model is improving
@@ -15,13 +12,18 @@ model_checkpoint:
   auto_insert_metric_name: False
 
 early_stopping:
+  _target_: lightning.pytorch.callbacks.EarlyStopping
   monitor: "validation/ema_loss" # name of the logged metric which determines when model is improving
   mode: "min" # "max" means higher metric value is better, can be also "min"
   patience: 25 # how many validation epochs of not improving until training stops
   min_delta: 1e-6 # minimum change in the monitored metric needed to qualify as an improvement
 
 model_summary:
+  _target_: lightning.pytorch.callbacks.RichModelSummary
   max_depth: 5
+
+rich_progress_bar:
+  _target_: lightning.pytorch.callbacks.RichProgressBar
 
 ema_loss:
   _target_: gotennet.models.components.callbacks.EMALossCallback
