@@ -27,7 +27,7 @@ uv run flow_train.py \
     model.num_steps=25 \
     model.num_samples=50 \
     task_name=train_neb_all_${SLURM_JOB_ID} \
-    project=goflow-neb \
+    project=goflow-neb-finer-metrics \
     test=false
 
 echo "NEB training experiment complete!"

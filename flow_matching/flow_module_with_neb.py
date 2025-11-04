@@ -7,7 +7,7 @@ from torch_geometric.data import Data, Batch
 import lightning.pytorch as pl
 from torchdiffeq import odeint
 
-from flow_matching.utils import get_shortest_path_fast_batched_x_1, rmsd_loss, get_substruct_matches, get_min_dmae_match_torch_batch, kabsch_align_batched
+from flow_matching.utils import get_shortest_path_fast_batched_x_1, rmsd_error, rmsd_loss, get_substruct_matches, get_min_dmae_match_torch_batch, kabsch_align_batched
 import numpy as np
 
 from gotennet.models.components.outputs import Atomwise3DOut
@@ -170,15 +170,37 @@ class FlowModule(pl.LightningModule):
 
     def train_val_step_with_neb(self, batch: Data) -> Tensor:
         x_t_I_N_3, dx_dt_I_N_3, t_I_G, neb_img_I_G = self.get_perturbed_flow_point_and_time_with_neb(batch)
-        
+        print("NEB images used in this batch (train_val_step):", torch.unique(neb_img_I_G))
         atom_I_N_3 = self.model_output_with_neb(x_t_I_N_3, batch, t_I_G, neb_img_I_G)
 
         # Optional: Weight loss by proximity to transition state if ts_idx is available
         if hasattr(batch, 'ts_idx'):
             # TODO: Implement TS-weighted loss when rmsd_loss supports per-sample losses
             pass
-        
-        return rmsd_loss(atom_I_N_3, dx_dt_I_N_3)
+
+        rmsd_loss_I = []
+        rmsd_error_I = [] 
+        for i in range(neb_img_I_G.shape[0]):
+            rmsd_loss_value = rmsd_loss(atom_I_N_3[i], dx_dt_I_N_3[i])
+            rmsd_error_value = rmsd_error(atom_I_N_3[i], dx_dt_I_N_3[i])
+            print(f"NEB image {neb_img_I_G[i]}: RMSD Loss = {rmsd_loss_value}, RMSD Error = {rmsd_error_value}")
+            rmsd_loss_I.append(rmsd_loss_value)
+            rmsd_error_I.append(rmsd_error_value)
+
+        loss = torch.stack(rmsd_loss_I).mean()
+
+        metrics = {}
+        metrics['train/val_loss'] = loss.detach()
+        metrics['train/loss_per_batch_mean'] = torch.stack(rmsd_loss_I).mean().detach()
+        for i, (l, e) in enumerate(zip(rmsd_loss_I, rmsd_error_I)):
+            # Per-molecule: per-graph mean then averaged across graphs
+            counts = torch.bincount(batch.batch, minlength=batch.num_graphs).to(e.dtype).unsqueeze(1)  # (G,1)
+            sum_per_graph = torch.zeros(batch.num_graphs, device=e.device).index_add(0, batch.batch, e)
+            mean_per_graph = sum_per_graph / counts.squeeze(1)  # (G,)
+            metrics[f'train/error_image_{i}_mean_per_graph'] = mean_per_graph.mean().detach()
+            # metrics[f'train/loss_image_{i}'] = l.detach()
+
+        return loss, metrics
 
     def model_output_with_neb(self, x_t_I_N_3, batch: Data, t_I_G: Tensor, neb_img_I_G: Tensor) -> Tensor:
 
@@ -209,10 +231,10 @@ class FlowModule(pl.LightningModule):
                 # Extract data for this NEB image
                 x_t_N_3 = x_t_I_N_3[i] 
                 t_G = t_I_G[i]  # Shape: [num_graphs, 1]
-                neb_idx_G = neb_img_I_G[i]  # Shape: [num_graphs]
+                neb_idx_G = neb_img_I_G[i]
                 
                 # Flatten t_G for time embedding (expects 1D tensor)
-                t_G_flat = t_G.flatten()  # Shape: [num_graphs]
+                t_G_flat = t_G.flatten()
                 
                 h_N_D, X_N_L_D = self.representation(x_t_N_3, t_G_flat, batch, neb_idx_G)
                 atom_N_3 = self.atomwise_3D_out_layer(h_N_D, X_N_L_D[:, :3, :])
@@ -223,13 +245,14 @@ class FlowModule(pl.LightningModule):
             return torch.stack(atom_I_N_3, dim=0)
 
     def training_step(self, batch: Data, batch_idx: int) -> Tensor:
-        loss = self.train_val_step_with_neb(batch)
-        self.log("train/loss", loss, prog_bar=True, on_step=True, on_epoch=False, batch_size=batch.num_graphs)
+        loss, metrics = self.train_val_step_with_neb(batch)
+        self.log_dict(metrics, prog_bar=True, on_step=True, on_epoch=False, batch_size=batch.num_graphs)
         return loss
 
     def validation_step(self, batch: Data, batch_idx: int) -> Tensor:
-        loss = self.train_val_step_with_neb(batch)
-        self.log("validation/val_loss", loss, prog_bar=True, on_step=False, on_epoch=True, batch_size=batch.num_graphs)
+        loss, metrics = self.train_val_step_with_neb(batch)
+        self.log_dict({k.replace('train/', 'validation/'): v for k, v in metrics.items()},
+                      prog_bar=True, on_step=False, on_epoch=True, batch_size=batch.num_graphs)
         return loss
 
     def test_step(self, batch: Batch, batch_idx: int):
