@@ -1,5 +1,6 @@
 import torch
 from torch import Tensor
+from torch_geometric.data import Data, Batch
 import numpy as np
 
 from ase import Atoms
@@ -138,12 +139,24 @@ def get_shortest_path_x_1(x_0_N_3, x_1_N_3):
     M_3_3 = x_1_centered.t() @ x_0_centered
 
     U, _, Vt = torch.linalg.svd(M_3_3)
-
     # correct for reflection
-    if torch.det(U @ Vt) < 0:
-        U[:, -1] *= -1
-
+    # Handle both non-batched (3x3) and batched (Bx3x3) cases.
     R_opt = U @ Vt
+    det_R = torch.det(R_opt)
+    if det_R.dim() == 0:
+        # scalar
+        if det_R < 0:
+            # flip last column of U
+            U[:, -1] *= -1
+            R_opt = U @ Vt
+    else:
+        # batched case: det_R has shape (B,)
+        neg_mask = det_R < 0
+        if neg_mask.any():
+            U = U.clone()
+            # flip last column for those batches where det < 0
+            U[neg_mask, :, -1] *= -1
+            R_opt = U @ Vt
     x1_centered_rotated = x_1_centered @ R_opt
     # Add back the centroid of x_0
     x1_aligned = x1_centered_rotated + x0_center
@@ -201,6 +214,60 @@ def no_steric_clash(pos_N_3: Tensor, clash_thresh=25):
     return compute_steric_clash_penalty(pos_N_3, r_threshold=0.7) < clash_thresh
 
 
+def select_TS_from_batch(batch: Batch) -> Tensor:
+    """
+    Return a per-atom template tensor of shape (N_total, 3) selecting the
+    transition-state (TS) image for a batched `Batch` object.
+
+    Handles several `batch.ts_idx` formats:
+      - None -> falls back to middle image
+      - scalar int -> selects that image for all atoms
+      - tensor/list of length batch.num_graphs -> per-graph TS indices mapped to atoms
+    """
+    rtsp_i = getattr(batch, 'ts_idx', None)
+    if rtsp_i is None:
+        idx = batch.pos_N_3_I.shape[2] // 2
+        return batch.pos_N_3_I[:, :, idx]
+
+    if torch.is_tensor(rtsp_i) and rtsp_i.numel() == batch.num_graphs:
+        per_atom_idx = rtsp_i[batch.batch]
+        arange_idx = torch.arange(batch.pos_N_3_I.shape[0], device=batch.pos_N_3_I.device)
+        return batch.pos_N_3_I[arange_idx, :, per_atom_idx]
+
+    if isinstance(rtsp_i, (list, tuple)) and len(rtsp_i) == batch.num_graphs:
+        rtsp_tensor = torch.tensor(rtsp_i, device=batch.pos_N_3_I.device, dtype=torch.long)
+        per_atom_idx = rtsp_tensor[batch.batch]
+        arange_idx = torch.arange(batch.pos_N_3_I.shape[0], device=batch.pos_N_3_I.device)
+        return batch.pos_N_3_I[arange_idx, :, per_atom_idx]
+
+    # scalar index
+    idx = int(rtsp_i)
+    return batch.pos_N_3_I[:, :, idx]
+
+
+def select_TS_from_data(data: Data) -> Tensor:
+    """
+    Return the ground-truth coordinates for the TS image for a single-sample
+    `Data` object. Supports scalar/list/0-d tensor ts_idx.
+    """
+    rtsp_i = getattr(data, 'ts_idx', None)
+    if rtsp_i is None:
+        idx = data.pos_N_3_I.shape[2] // 2
+        return data.pos_N_3_I[:, :, idx]
+
+    if torch.is_tensor(rtsp_i):
+        if rtsp_i.numel() == 1:
+            idx = int(rtsp_i.item())
+        else:
+            idx = int(rtsp_i[0].item())
+    elif isinstance(rtsp_i, (list, tuple)):
+        idx = int(rtsp_i[0])
+    else:
+        idx = int(rtsp_i)
+
+    return data.pos_N_3_I[:, :, idx]
+
+
 def get_min_rmsd_match(matches, gt_pos, pred_pos):
     rmsd_M = []
     for match in matches:
@@ -211,20 +278,76 @@ def get_min_rmsd_match(matches, gt_pos, pred_pos):
 
 
 def calc_DMAE(dm_ref, dm_guess, mape=False):
-    if mape:
-        retval = abs(dm_ref - dm_guess) / dm_ref
+    # Support both numpy arrays and torch tensors as inputs.
+    if hasattr(dm_ref, 'cpu') and hasattr(dm_ref, 'numpy'):
+        dm_ref_np = dm_ref.cpu().numpy()
     else:
-        retval = abs(dm_ref - dm_guess)
-    return np.triu(retval, k=1).sum() / len(dm_ref) / (len(dm_ref) - 1) * 2
+        dm_ref_np = np.asarray(dm_ref)
+
+    if hasattr(dm_guess, 'cpu') and hasattr(dm_guess, 'numpy'):
+        dm_guess_np = dm_guess.cpu().numpy()
+    else:
+        dm_guess_np = np.asarray(dm_guess)
+
+    if mape:
+        retval = np.abs(dm_ref_np - dm_guess_np) / (dm_ref_np + 1e-12)
+    else:
+        retval = np.abs(dm_ref_np - dm_guess_np)
+
+    N = dm_ref_np.shape[0]
+    if N < 2:
+        return 0.0
+
+    return np.triu(retval, k=1).sum() / N / (N - 1) * 2
 
 
 def get_min_dmae_match(matches, ref_pos, prb_pos):
+    def _to_2d_pos(arr):
+        """Convert arr (torch or numpy) to a 2D numpy array of shape (N,3).
+        Handles common transposed or extra-batch shapes by trying sensible fallbacks.
+        """
+        # Convert torch tensors to numpy
+        try:
+            if hasattr(arr, 'detach'):
+                a = arr.detach().cpu().numpy()
+            else:
+                a = np.asarray(arr)
+        except Exception:
+            a = np.asarray(arr)
+
+        # If already 2D with last dim 3, return
+        if a.ndim == 2 and a.shape[1] == 3:
+            return a
+
+        # If transposed (3, N) -> transpose
+        if a.ndim == 2 and a.shape[0] == 3 and a.shape[1] >= 1:
+            return a.T
+
+        # If shape is (S, N, 3) take the first sample
+        if a.ndim == 3 and a.shape[2] == 3:
+            return a[0]
+
+        # If it's a flat array length divisible by 3, reshape
+        if a.ndim == 1 and a.size % 3 == 0:
+            return a.reshape(-1, 3)
+
+        # As a last resort, try to flatten trailing dims into (-1, 3)
+        flat = a.reshape(-1, 3)
+        return flat
+
+    ref_pos_np = _to_2d_pos(ref_pos)
+    prb_pos_np = _to_2d_pos(prb_pos)
+
     dmaes = []
     for match in matches:
-        match_pos = prb_pos[list(match)]
-        dmae = calc_DMAE(cdist(ref_pos, ref_pos), cdist(match_pos, match_pos))
+        match_pos_np = prb_pos_np[list(match)]
+        # ensure match_pos_np is 2D
+        match_pos_np = _to_2d_pos(match_pos_np)
+        dmae = calc_DMAE(cdist(ref_pos_np, ref_pos_np), cdist(match_pos_np, match_pos_np))
         dmaes.append(dmae)
-    return list(matches[dmaes.index(min(dmaes))])
+
+    best_idx = int(np.argmin(dmaes))
+    return list(matches[best_idx])
 
 
 def get_substruct_matches(smarts):
@@ -395,3 +518,29 @@ def kabsch_align_batched(x0_N_3: torch.Tensor, x1_S_N_3: torch.Tensor):
     rmsd_S = diff.pow(2).mean(dim=(1,2)).sqrt()       # (S,)
 
     return x1_aligned_S_N_3, rmsd_S
+
+
+def normalize_pos_to_2d(arr):
+    """Convert a torch tensor or numpy array to a 2D numpy array of shape (N,3).
+
+    Handles common variants: (N,3), (3,N) (transposed), (S,N,3) (take first sample),
+    flat arrays of length 3*N, or other shapes by reshaping the trailing dims to (-1,3).
+    """
+    try:
+        if hasattr(arr, 'detach'):
+            a = arr.detach().cpu().numpy()
+        else:
+            a = np.asarray(arr)
+    except Exception:
+        a = np.asarray(arr)
+
+    if a.ndim == 2 and a.shape[1] == 3:
+        return a
+    if a.ndim == 2 and a.shape[0] == 3:
+        return a.T
+    if a.ndim == 3 and a.shape[2] == 3:
+        return a[0]
+    if a.ndim == 1 and a.size % 3 == 0:
+        return a.reshape(-1, 3)
+    # Fallback: try to reshape last dim into 3
+    return a.reshape(-1, 3)

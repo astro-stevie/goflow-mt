@@ -10,8 +10,10 @@ import lightning.pytorch as L
 import torch
 from lightning import Trainer
 from torch_geometric.data import Data
+import numpy as np
+import traceback
 
-from flow_matching.utils import rmsd_loss, compute_steric_clash_penalty, pred_atom_index_align, calc_DMAE, pred_atom_index_align_mad
+from flow_matching.utils import rmsd_loss, compute_steric_clash_penalty, pred_atom_index_align, calc_DMAE, pred_atom_index_align_mad, normalize_pos_to_2d
 from gotennet.utils import RankedLogger
 from scipy.spatial.distance import cdist
 
@@ -71,7 +73,6 @@ def extract_angles_from_connectivity(connectivity: dict) -> torch.Tensor:
         return torch.tensor(angles, dtype=torch.long)
     else:
         return torch.empty((0, 3), dtype=torch.long)
-
 
 def extract_dihedrals_from_connectivity(connectivity: dict) -> torch.Tensor:
     """
@@ -188,64 +189,95 @@ def evaluate_geometry(
     Returns:
     Dict[str, float]
     """
-    # RMSE error
-    # Handle both old format (data.pos with multiple dimensions) and NEB format (data.pos_N_3_I)
-    if hasattr(data, 'pos_N_3_I'):
-        # NEB format: use actual transition state index if available
-        if hasattr(data, 'ts_idx_used'):
-            ts_idx = data.ts_idx_used
-        elif hasattr(data, 'ts_idx'):
-            ts_idx = data.ts_idx if isinstance(data.ts_idx, int) else data.ts_idx.item()
+    try:
+        # RMSE error
+        # Handle both old format (data.pos with multiple dimensions) and NEB format (data.pos_N_3_I)
+        if hasattr(data, 'pos_N_3_I'):
+            # NEB format: use actual transition state index if available
+            if hasattr(data, 'ts_idx_used'):
+                ts_idx = data.ts_idx_used
+            elif hasattr(data, 'ts_idx'):
+                ts_idx = data.ts_idx if isinstance(data.ts_idx, int) else data.ts_idx.item()
+            else:
+                # Fallback to middle image
+                num_images = data.pos_N_3_I.shape[2]
+                ts_idx = num_images // 2
+
+            gt_pos_N_3_raw = data.pos_N_3_I[:, :, ts_idx]  # [N_atoms, 3]
+            pred_pos_raw = data.pos_gen_  # [N_atoms, 3] - already set to transition state in test_step
         else:
-            # Fallback to middle image
-            num_images = data.pos_N_3_I.shape[2]
-            ts_idx = num_images // 2
-            
-        gt_pos_N_3_raw = data.pos_N_3_I[:, :, ts_idx]  # [N_atoms, 3]
-        pred_pos_raw = data.pos_gen_  # [N_atoms, 3] - already set to transition state in test_step
-    else:
-        # Old format
-        gt_pos_N_3_raw = data.pos[:, 1, :]
-        pred_pos_raw = data.pos_gen[-1]
-    
-    pred_pos_N_3, gt_pos_N_3 = pred_atom_index_align(data.smiles, gt_pos_N_3_raw, pred_pos_raw)
-    rmse = rmsd_loss(pred_pos_N_3, gt_pos_N_3)
-    # MAE error
-    pred_pos_aligned_mae = pred_atom_index_align_mad(data.smiles, gt_pos_N_3_raw, pred_pos_raw)
-    mae = calc_DMAE(cdist(gt_pos_N_3, gt_pos_N_3), cdist(pred_pos_aligned_mae, pred_pos_aligned_mae))
+            # Old format
+            gt_pos_N_3_raw = data.pos[:, 1, :]
+            pred_pos_raw = data.pos_gen[-1]
 
-    connectivity = build_connectivity(data.edge_index)
-    # Extract angle and dihedral indices from the connectivity.
-    angle_indices_M1_3 = extract_angles_from_connectivity(connectivity)
-    dihedral_indices_M2_4 = extract_dihedrals_from_connectivity(connectivity)
+        pred_pos_N_3, gt_pos_N_3 = pred_atom_index_align(data.smiles, gt_pos_N_3_raw, pred_pos_raw)
+        # Ensure positions are torch tensors with shape (N,3)
+        try:
+            gt_pos_np = normalize_pos_to_2d(gt_pos_N_3)
+            pred_pos_np = normalize_pos_to_2d(pred_pos_N_3)
+            gt_pos_N_3 = torch.as_tensor(gt_pos_np, dtype=torch.get_default_dtype())
+            pred_pos_N_3 = torch.as_tensor(pred_pos_np, dtype=torch.get_default_dtype())
+        except Exception:
+            # Fallback: if conversion fails, assume inputs are already correct torch tensors
+            pass
 
-    # Bond angle comparison.
-    gt_angles_M1 = compute_bond_angles(gt_pos_N_3, angle_indices_M1_3)
-    pred_angles_M1 = compute_bond_angles(pred_pos_N_3, angle_indices_M1_3)
-    # Convert radians to degrees.
-    bond_angle_error = (torch.abs(gt_angles_M1 - pred_angles_M1) * 180.0 / math.pi).mean()
+        rmse = rmsd_loss(pred_pos_N_3, gt_pos_N_3)
+        # MAE error
+        pred_pos_aligned_mae = pred_atom_index_align_mad(data.smiles, gt_pos_N_3_raw, pred_pos_raw)
+        # Ensure inputs to scipy.cdist are numpy arrays
+        gt_np = normalize_pos_to_2d(gt_pos_N_3)
+        pred_np = normalize_pos_to_2d(pred_pos_aligned_mae)
 
-    # Dihedral angle comparison.
-    gt_dihedrals_M2 = compute_dihedral_angles(gt_pos_N_3, dihedral_indices_M2_4)
-    pred_dihedrals_M2 = compute_dihedral_angles(pred_pos_N_3, dihedral_indices_M2_4)
-    diff_M2 = torch.abs(gt_dihedrals_M2 - pred_dihedrals_M2)
-    # Handle periodicity: if the difference is larger than pi, wrap around.
-    diff_M2 = torch.where(diff_M2 > math.pi, 2 * math.pi - diff_M2, diff_M2)
-    dihedral_angle_error = (diff_M2 * 180.0 / math.pi).mean()
+        mae = calc_DMAE(cdist(gt_np, gt_np), cdist(pred_np, pred_np))
 
-    # Steric clash penalty
-    steric_clash_pred = compute_steric_clash_penalty(pred_pos_N_3, r_threshold, epsilon)
-    steric_clash_gt = compute_steric_clash_penalty(gt_pos_N_3, r_threshold, epsilon)
-    steric_clash_diff = (steric_clash_pred - steric_clash_gt).item()
-    steric_clash_diff = min(steric_clash_diff, 9999)
+        connectivity = build_connectivity(data.edge_index)
+        # Extract angle and dihedral indices from the connectivity.
+        angle_indices_M1_3 = extract_angles_from_connectivity(connectivity)
+        dihedral_indices_M2_4 = extract_dihedrals_from_connectivity(connectivity)
 
-    return {
-        "mae": round(float(mae), 4),
-        "rmse": round(rmse.item(), 4),
-        "angle_error": round(bond_angle_error.item(), 4),
-        "dihedral_error": round(dihedral_angle_error.item(), 4),
-        "steric_clash": round(steric_clash_diff, 4)
-    }
+        # Bond angle comparison.
+        gt_angles_M1 = compute_bond_angles(gt_pos_N_3, angle_indices_M1_3)
+        pred_angles_M1 = compute_bond_angles(pred_pos_N_3, angle_indices_M1_3)
+        # Convert radians to degrees.
+        bond_angle_error = (torch.abs(gt_angles_M1 - pred_angles_M1) * 180.0 / math.pi).mean()
+
+        # Dihedral angle comparison.
+        gt_dihedrals_M2 = compute_dihedral_angles(gt_pos_N_3, dihedral_indices_M2_4)
+        pred_dihedrals_M2 = compute_dihedral_angles(pred_pos_N_3, dihedral_indices_M2_4)
+        diff_M2 = torch.abs(gt_dihedrals_M2 - pred_dihedrals_M2)
+        # Handle periodicity: if the difference is larger than pi, wrap around.
+        diff_M2 = torch.where(diff_M2 > math.pi, 2 * math.pi - diff_M2, diff_M2)
+        dihedral_angle_error = (diff_M2 * 180.0 / math.pi).mean()
+
+        # Steric clash penalty
+        steric_clash_pred = compute_steric_clash_penalty(pred_pos_N_3, r_threshold, epsilon)
+        steric_clash_gt = compute_steric_clash_penalty(gt_pos_N_3, r_threshold, epsilon)
+        steric_clash_diff = (steric_clash_pred - steric_clash_gt).item()
+        steric_clash_diff = min(steric_clash_diff, 9999)
+
+        return {
+            "mae": round(float(mae), 4),
+            "rmse": round(rmse.item(), 4),
+            "angle_error": round(bond_angle_error.item(), 4),
+            "dihedral_error": round(dihedral_angle_error.item(), 4),
+            "steric_clash": round(steric_clash_diff, 4)
+        }
+    except Exception as e:
+        # On unexpected failures, gather debug context and re-raise
+        try:
+            dbg = {
+                'smiles': getattr(data, 'smiles', None),
+                'pos_N_3_I_shape': getattr(data, 'pos_N_3_I', None).shape if hasattr(data, 'pos_N_3_I') else None,
+                'pos_shape': getattr(data, 'pos', None).shape if hasattr(data, 'pos') else None,
+                'pos_gen__shape': getattr(data, 'pos_gen_', None).shape if hasattr(data, 'pos_gen_') else None,
+                'pos_gen_shape': (len(data.pos_gen),) if hasattr(data, 'pos_gen') and isinstance(data.pos_gen, (list, tuple)) else None,
+                'ts_idx': getattr(data, 'ts_idx', None),
+                'ts_idx_used': getattr(data, 'ts_idx_used', None),
+            }
+        except Exception:
+            dbg = {'info': 'could not collect debug shapes'}
+        log.error(f"evaluate_geometry unexpected error: {e}. Debug: {dbg}\nTraceback:\n{traceback.format_exc()}")
+        raise
 
 # --------------------------- Metric Code End ---------------------------
 

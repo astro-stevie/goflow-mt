@@ -22,13 +22,12 @@ uv run flow_train.py \
     experiment=flow2_neb \
     model=flow_neb \
     data=t1x \
-    model.neb_img_subset=all \
     logger=[wandb,csv] \
     model.num_steps=25 \
     model.num_samples=50 \
-    task_name=train_neb_all_${SLURM_JOB_ID} \
+    task_name=train_neb_TS_${SLURM_JOB_ID} \
     project=goflow-neb-finer-metrics \
     test=false
 
 echo "NEB training experiment complete!"
-echo "Check logs at: /home/stephg/goflow/logs/train_neb_all_${SLURM_JOB_ID}.out"
+echo "Check logs at: /home/stephg/goflow/logs/train_neb_TS_${SLURM_JOB_ID}.out"

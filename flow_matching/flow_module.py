@@ -7,7 +7,7 @@ from torch_geometric.data import Data, Batch
 import lightning.pytorch as pl
 from torchdiffeq import odeint
 
-from flow_matching.utils import get_shortest_path_fast_batched_x_1, rmsd_loss, get_substruct_matches, get_min_dmae_match_torch_batch
+from flow_matching.utils import get_shortest_path_fast_batched_x_1, rmsd_loss, get_substruct_matches, get_min_dmae_match_torch_batch, select_TS_from_batch, select_TS_from_data
 import numpy as np
 
 from gotennet.models.components.outputs import Atomwise3DOut
@@ -75,9 +75,9 @@ class FlowModule(pl.LightningModule):
         self.results_R = []
 
     def get_perturbed_flow_point_and_time(self, batch: Data):
-        rtsp_i = 1
 
-        x_1_N_3 = batch.pos[:, rtsp_i, :]
+        x_1_N_3 = select_TS_from_batch(batch)
+
         x_0_N_3 = torch.randn_like(x_1_N_3, device=self.device)
 
         t_G = torch.rand(batch.num_graphs, 1, device=self.device)
@@ -128,7 +128,9 @@ class FlowModule(pl.LightningModule):
         for i in range(self.num_samples):
             if self.seed is not None:
                 torch.manual_seed(self.seed + i)
-            pos_init_N_3 = torch.randn_like(batch.pos[:, 1, :], device=self.device)
+            # Use helper to select per-atom template matching TS selection (batch-level)
+            ts_index = select_TS_from_batch(batch)
+            pos_init_N_3 = torch.randn_like(ts_index, device=self.device)
             pos_gen_traj_S_T_N_3[i, ...] = odeint(ode_func, pos_init_N_3, t_T, method='euler')
 
         for j, data in enumerate(batch.to_data_list()):
@@ -144,7 +146,33 @@ class FlowModule(pl.LightningModule):
             pos_best_T_Nm_3 = pos_gen_traj_S_T_Nm_3[torch.argmin(distances_Sv)]
             # -------------------------- END: Aggregate the S samples --------------------------
 
-            data.pos_gen = pos_best_T_Nm_3
+            # Save prediction in both legacy and canonical forms expected by callbacks
+            # canonical attribute used by NEB evaluation
+            data.pos_gen_ = pos_best_T_Nm_3
+            # legacy-format: make pos_gen indexable so data.pos_gen[-1] returns the prediction
+            data.pos_gen = [pos_best_T_Nm_3]
+
+            # Record which TS index we used for this sample so downstream metrics can pick it up
+            if hasattr(data, 'ts_idx'):
+                rtsp_i = data.ts_idx
+                try:
+                    if torch.is_tensor(rtsp_i):
+                        if rtsp_i.numel() == 1:
+                            ts_idx_val = int(rtsp_i.item())
+                        else:
+                            ts_idx_val = int(rtsp_i[0].item())
+                    elif isinstance(rtsp_i, (list, tuple)):
+                        ts_idx_val = int(rtsp_i[0])
+                    else:
+                        ts_idx_val = int(rtsp_i)
+                except Exception:
+                    ts_idx_val = 0
+            else:
+                # fallback: middle image
+                ts_idx_val = batch.pos_N_3_I.shape[2] // 2 if hasattr(batch, 'pos_N_3_I') else 0
+
+            data.ts_idx_used = ts_idx_val
+
             self.results_R.append(data.to("cpu"))
 
     def align_and_rotate_samples(self, data, pos_gen_traj_S_T_Nm_3):
@@ -152,7 +180,8 @@ class FlowModule(pl.LightningModule):
         For each molecule we sample the TS S times. 
         Do substructure matching, and align (w. Kabsch) to the GT.
         """
-        pos_gt_Nm_3 = data.pos[:, 1, :]
+        # Use helper to select TS template for this single sample
+        pos_gt_Nm_3 = select_TS_from_data(data)
         
         # Substructure matching (batched for S)
         matches = get_substruct_matches(data.smiles)

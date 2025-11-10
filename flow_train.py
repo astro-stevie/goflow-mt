@@ -14,7 +14,7 @@ from gotennet.utils import RankedLogger, instantiate_callbacks, instantiate_logg
 log = RankedLogger(__name__, rank_zero_only=True)
 
 
-@hydra.main(version_base="1.3", config_path="configs", config_name="train_neb.yaml")
+@hydra.main(version_base="1.3", config_path="configs", config_name="train.yaml")
 def train_flow(cfg: DictConfig):
     #################### PyTorch Specifics ####################
     torch.set_float32_matmul_precision(cfg.get("matmul_precision", "high"))

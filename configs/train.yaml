@@ -3,7 +3,7 @@
 # self at the end: Primary config values take precedence
 # self at the beginning: Defaults list values take precedence
 defaults:
-  - data: rdb7
+  - data: t1x
   - model: flow
   - callbacks: default
   - logger: wandb
@@ -32,7 +32,7 @@ train: True
 # evaluate on test set, using best model weights achieved during training
 # lightning chooses best weights based on the metric specified in checkpoint callback
 test: True
-custom_model_weight_path: logs/eval/runs/2025-04-08_14-23-27/checkpoints/epoch_347.ckpt
+custom_model_weight_path: null
 
 # simply provide checkpoint path to resume training
 ckpt_path: null
@@ -41,6 +41,3 @@ ckpt_path: null
 seed: 1
 model:
   seed: ${seed}
-  
-data:
-  split_file: random_split.pkl

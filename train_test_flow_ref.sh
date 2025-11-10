@@ -20,11 +20,11 @@ source .venv/bin/activate
 uv run flow_train.py -m \
     experiment=flow2 \
     model=flow \
-    data=rdb7 \
+    data=t1x \
     trainer=gpu \
     model.num_steps=25 \
     model.num_samples=50 \
-    task_name=train_test_flow_ref_${SLURM_JOB_ID} \
-    project=goflow-neb \
+    task_name=goflow_ref_t1x_${SLURM_JOB_ID} \
+    project=goflow-neb-finer-metrics \
     logger=[wandb,csv]
     
