@@ -143,14 +143,17 @@ class FlowModule(pl.LightningModule):
             # -------------------------- START: Aggregate the S samples --------------------------
             pos_aggr_Nm_3 = torch.median(pos_gen_traj_S_T_Nm_3[:, -1, :, :], dim=0).values
             distances_Sv = torch.linalg.vector_norm(pos_gen_traj_S_T_Nm_3[:, -1, :, :] - pos_aggr_Nm_3, dim=(1, 2))
-            pos_best_T_Nm_3 = pos_gen_traj_S_T_Nm_3[torch.argmin(distances_Sv)]
+            # pick the sample (S) with minimum distance to the aggregate, then take its final time-step (-1)
+            best_idx = int(torch.argmin(distances_Sv).item())
+            pos_best_Nm_3 = pos_gen_traj_S_T_Nm_3[best_idx, -1, :, :]
             # -------------------------- END: Aggregate the S samples --------------------------
 
             # Save prediction in both legacy and canonical forms expected by callbacks
             # canonical attribute used by NEB evaluation
-            data.pos_gen_ = pos_best_T_Nm_3
+            # canonical attribute used by NEB evaluation: final predicted coordinates (Nm, 3)
+            data.pos_gen_ = pos_best_Nm_3
             # legacy-format: make pos_gen indexable so data.pos_gen[-1] returns the prediction
-            data.pos_gen = [pos_best_T_Nm_3]
+            data.pos_gen = [pos_best_Nm_3]
 
             # Record which TS index we used for this sample so downstream metrics can pick it up
             if hasattr(data, 'ts_idx'):
@@ -166,10 +169,10 @@ class FlowModule(pl.LightningModule):
                     else:
                         ts_idx_val = int(rtsp_i)
                 except Exception:
-                    ts_idx_val = 0
+                    ts_idx_val = 5
             else:
                 # fallback: middle image
-                ts_idx_val = batch.pos_N_3_I.shape[2] // 2 if hasattr(batch, 'pos_N_3_I') else 0
+                ts_idx_val = batch.pos_N_3_I.shape[2] // 2 if hasattr(batch, 'pos_N_3_I') else 5
 
             data.ts_idx_used = ts_idx_val
 

@@ -139,28 +139,16 @@ def get_shortest_path_x_1(x_0_N_3, x_1_N_3):
     M_3_3 = x_1_centered.t() @ x_0_centered
 
     U, _, Vt = torch.linalg.svd(M_3_3)
-    # correct for reflection
-    # Handle both non-batched (3x3) and batched (Bx3x3) cases.
+     # correct for reflection
+    if torch.det(U @ Vt) < 0:
+        U[:, -1] *= -1
+
     R_opt = U @ Vt
-    det_R = torch.det(R_opt)
-    if det_R.dim() == 0:
-        # scalar
-        if det_R < 0:
-            # flip last column of U
-            U[:, -1] *= -1
-            R_opt = U @ Vt
-    else:
-        # batched case: det_R has shape (B,)
-        neg_mask = det_R < 0
-        if neg_mask.any():
-            U = U.clone()
-            # flip last column for those batches where det < 0
-            U[neg_mask, :, -1] *= -1
-            R_opt = U @ Vt
     x1_centered_rotated = x_1_centered @ R_opt
     # Add back the centroid of x_0
     x1_aligned = x1_centered_rotated + x0_center
     return x1_aligned
+
 
 def remove_all_bonds(mol):
     rw_mol = Chem.RWMol(mol)
@@ -518,29 +506,3 @@ def kabsch_align_batched(x0_N_3: torch.Tensor, x1_S_N_3: torch.Tensor):
     rmsd_S = diff.pow(2).mean(dim=(1,2)).sqrt()       # (S,)
 
     return x1_aligned_S_N_3, rmsd_S
-
-
-def normalize_pos_to_2d(arr):
-    """Convert a torch tensor or numpy array to a 2D numpy array of shape (N,3).
-
-    Handles common variants: (N,3), (3,N) (transposed), (S,N,3) (take first sample),
-    flat arrays of length 3*N, or other shapes by reshaping the trailing dims to (-1,3).
-    """
-    try:
-        if hasattr(arr, 'detach'):
-            a = arr.detach().cpu().numpy()
-        else:
-            a = np.asarray(arr)
-    except Exception:
-        a = np.asarray(arr)
-
-    if a.ndim == 2 and a.shape[1] == 3:
-        return a
-    if a.ndim == 2 and a.shape[0] == 3:
-        return a.T
-    if a.ndim == 3 and a.shape[2] == 3:
-        return a[0]
-    if a.ndim == 1 and a.size % 3 == 0:
-        return a.reshape(-1, 3)
-    # Fallback: try to reshape last dim into 3
-    return a.reshape(-1, 3)
