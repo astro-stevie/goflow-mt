@@ -19,15 +19,15 @@ echo "Working directory: $(pwd)"
 
 # Run full NEB training with proper configs
 uv run flow_train.py \
-    experiment=flow2_neb \
+    experiment=flow2 \
     model=flow_neb \
-    data=t1x \
+    data=rdb7 \
     model.neb_img_subset=all \
     logger=[wandb,csv] \
     model.num_steps=25 \
     model.num_samples=50 \
     task_name=train_neb_all_${SLURM_JOB_ID} \
-    project=goflow-neb-finer-metrics \
+    project=goflow-neb-rdb7 \
     test=false
 
 echo "NEB training experiment complete!"

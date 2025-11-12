@@ -84,7 +84,7 @@ class FlowModule(pl.LightningModule):
     
     def get_perturbed_flow_point_and_time_with_neb(self, batch: Data):
 
-        num_atoms, dim, neb_img = batch.pos_N_3_I.shape
+        num_atoms, neb_img, dim = batch.pos.shape
         neb_img_subset = self.neb_img_subset # Determine which NEB images to use
 
          # Accept string sentinel 'all' or 'auto'
@@ -119,7 +119,7 @@ class FlowModule(pl.LightningModule):
                 end_idx = start_idx + num_atoms_in_graph
 
                 # Extract TS positions for this reaction
-                x_1_N_3_list.append(batch.pos_N_3_I[start_idx:end_idx, :, ts_idx])
+                x_1_N_3_list.append(batch.pos[start_idx:end_idx, ts_idx, :])
                 start_idx = end_idx
 
             x_1_N_3 = torch.cat(x_1_N_3_list, dim=0)
@@ -145,7 +145,7 @@ class FlowModule(pl.LightningModule):
             t_G_I = []
             neb_imgs_I_G = []
             for neb_idx in neb_img_subset:
-                x_1_N_3 = batch.pos_N_3_I[:, :, neb_idx]
+                x_1_N_3 = batch.pos[:, neb_idx, :]
                 x_0_N_3 = torch.randn_like(x_1_N_3, device=self.device)
 
                 t_G = torch.rand(batch.num_graphs, 1, device=self.device)
@@ -170,7 +170,7 @@ class FlowModule(pl.LightningModule):
 
     def train_val_step_with_neb(self, batch: Data) -> Tensor:
         x_t_I_N_3, dx_dt_I_N_3, t_I_G, neb_img_I_G = self.get_perturbed_flow_point_and_time_with_neb(batch)
-        print("NEB images used in this batch (train_val_step):", torch.unique(neb_img_I_G))
+        # print("NEB images used in this batch (train_val_step):", torch.unique(neb_img_I_G))
         atom_I_N_3 = self.model_output_with_neb(x_t_I_N_3, batch, t_I_G, neb_img_I_G)
 
         # Optional: Weight loss by proximity to transition state if ts_idx is available
@@ -183,7 +183,7 @@ class FlowModule(pl.LightningModule):
         for i in range(neb_img_I_G.shape[0]):
             rmsd_loss_value = rmsd_loss(atom_I_N_3[i], dx_dt_I_N_3[i])
             rmsd_error_value = rmsd_error(atom_I_N_3[i], dx_dt_I_N_3[i])
-            print(f"NEB image {neb_img_I_G[i]}: RMSD Loss = {rmsd_loss_value}, RMSD Error = {rmsd_error_value}")
+            # print(f"NEB image {neb_img_I_G[i]}: RMSD Loss = {rmsd_loss_value}, RMSD Error = {rmsd_error_value}")
             rmsd_loss_I.append(rmsd_loss_value)
             rmsd_error_I.append(rmsd_error_value)
 
@@ -261,7 +261,7 @@ class FlowModule(pl.LightningModule):
         np.random.seed(self.seed)
         
         # Get NEB dimensions from data
-        num_atoms, dim, num_neb_images = batch.pos_N_3_I.shape
+        num_atoms, num_neb_images, dim = batch.pos.shape
 
         t_T = torch.linspace(0, 1, steps=self.num_steps, device=self.device)
 
@@ -291,7 +291,7 @@ class FlowModule(pl.LightningModule):
                 pos_gen_traj_S_T_Nm_3 = pos_gen_traj_S_T_I_N_3[:, :, neb_idx, mask, :]
                 
                 # Use ground truth from corresponding NEB image for alignment
-                pos_gt_Nm_3 = data.pos_N_3_I[:, :, neb_idx].T  # Convert to [Nm_atoms, 3]
+                pos_gt_Nm_3 = data.pos[:, neb_idx, :].T  # Convert to [Nm_atoms, 3]
                 
                 # Align and rotate samples for this NEB image
                 pos_gen_traj_S_T_Nm_3, _ = self.align_and_rotate_samples(data, pos_gen_traj_S_T_Nm_3)
