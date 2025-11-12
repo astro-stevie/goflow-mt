@@ -145,7 +145,9 @@ class FlowModule(pl.LightningModule):
             distances_Sv = torch.linalg.vector_norm(pos_gen_traj_S_T_Nm_3[:, -1, :, :] - pos_aggr_Nm_3, dim=(1, 2))
             # pick the sample (S) with minimum distance to the aggregate, then take its final time-step (-1)
             best_idx = int(torch.argmin(distances_Sv).item())
+            print("Chose best sample index:", best_idx, "with distance:", distances_Sv[best_idx].item())
             pos_best_Nm_3 = pos_gen_traj_S_T_Nm_3[best_idx, -1, :, :]
+            # pos_best_T_Nm_3 = pos_gen_traj_S_T_Nm_3[torch.argmin(distances_Sv)]
             # -------------------------- END: Aggregate the S samples --------------------------
 
             # Save prediction in both legacy and canonical forms expected by callbacks

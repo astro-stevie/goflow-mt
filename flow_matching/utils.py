@@ -214,13 +214,9 @@ def select_TS_from_batch(batch: Batch) -> Tensor:
     """
     rtsp_i = getattr(batch, 'ts_idx', None)
     if rtsp_i is None:
+        print("No TS index.")
         idx = batch.pos_N_3_I.shape[2] // 2
         return batch.pos_N_3_I[:, :, idx]
-
-    if torch.is_tensor(rtsp_i) and rtsp_i.numel() == batch.num_graphs:
-        per_atom_idx = rtsp_i[batch.batch]
-        arange_idx = torch.arange(batch.pos_N_3_I.shape[0], device=batch.pos_N_3_I.device)
-        return batch.pos_N_3_I[arange_idx, :, per_atom_idx]
 
     if isinstance(rtsp_i, (list, tuple)) and len(rtsp_i) == batch.num_graphs:
         rtsp_tensor = torch.tensor(rtsp_i, device=batch.pos_N_3_I.device, dtype=torch.long)
@@ -228,7 +224,6 @@ def select_TS_from_batch(batch: Batch) -> Tensor:
         arange_idx = torch.arange(batch.pos_N_3_I.shape[0], device=batch.pos_N_3_I.device)
         return batch.pos_N_3_I[arange_idx, :, per_atom_idx]
 
-    # scalar index
     idx = int(rtsp_i)
     return batch.pos_N_3_I[:, :, idx]
 
