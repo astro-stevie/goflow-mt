@@ -14,3 +14,4 @@ wandb/
 neb_test_methods_proposed.py
 test_neb_integration.py
 delete/
+slurm/

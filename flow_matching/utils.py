@@ -357,8 +357,10 @@ def kabsch_align_batched(x0_N_3: torch.Tensor, x1_S_N_3: torch.Tensor):
         x1_aligned_S_N_3: (S, N, 3)
         rmsd_S:           (S,) tensor of per-sample RMSD
     """
-    assert x0_N_3.dim() == 2 and x0_N_3.size(-1) == 3
-    assert x1_S_N_3.dim() == 3 and x1_S_N_3.size(-1) == 3
+    # print(f"x0_N_3 shape: {x0_N_3.shape}, dim: {x0_N_3.dim()}, size(-1): {x0_N_3.size(-1)}")
+    # print(f"x1_S_N_3 shape: {x1_S_N_3.shape}, dim: {x1_S_N_3.dim()}, size(-1): {x1_S_N_3.size(-1)}")
+    assert x0_N_3.dim() == 2 and x0_N_3.size(-1) == 3, f"Expected x0_N_3 shape (N, 3), got {x0_N_3.shape}"
+    assert x1_S_N_3.dim() == 3 and x1_S_N_3.size(-1) == 3, f"Expected x1_S_N_3 shape (S, N, 3), got {x1_S_N_3.shape}"
     S, N, _ = x1_S_N_3.shape
     dtype  = x0_N_3.dtype
 

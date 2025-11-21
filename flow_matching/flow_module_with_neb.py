@@ -262,6 +262,7 @@ class FlowModule(pl.LightningModule):
         
         # Get NEB dimensions from data
         num_atoms, num_neb_images, dim = batch.pos.shape
+        # print("DEBUG Test Step Dimensions", num_atoms, num_neb_images, dim)
 
         t_T = torch.linspace(0, 1, steps=self.num_steps, device=self.device)
 
@@ -278,6 +279,7 @@ class FlowModule(pl.LightningModule):
                 torch.manual_seed(self.seed + i)
             pos_init_I_N_3 = torch.randn((num_neb_images, batch.num_nodes, 3), device=self.device)
             pos_gen_traj_S_T_I_N_3[i, ...] = odeint(ode_func, pos_init_I_N_3, t_T, method='euler')
+            # print("DEBUG Dimensions after sample", i, ":", pos_gen_traj_S_T_I_N_3[i, ...].shape)
 
         for j, data in enumerate(batch.to_data_list()):
             # Get single molecule positions from sampled trajectories
@@ -291,10 +293,11 @@ class FlowModule(pl.LightningModule):
                 pos_gen_traj_S_T_Nm_3 = pos_gen_traj_S_T_I_N_3[:, :, neb_idx, mask, :]
                 
                 # Use ground truth from corresponding NEB image for alignment
-                pos_gt_Nm_3 = data.pos[:, neb_idx, :].T  # Convert to [Nm_atoms, 3]
+                pos_gt_Nm_3 = data.pos[:, neb_idx, :]  # Shape should be [Nm_atoms, 3]
+                # print(f"DEBUG: pos_gt_Nm_3 shape before passing: {pos_gt_Nm_3.shape}")
                 
                 # Align and rotate samples for this NEB image
-                pos_gen_traj_S_T_Nm_3, _ = self.align_and_rotate_samples(data, pos_gen_traj_S_T_Nm_3)
+                pos_gen_traj_S_T_Nm_3, _ = self.align_and_rotate_samples(data, pos_gen_traj_S_T_Nm_3, pos_gt_Nm_3)
 
                 # -------------------------- START: Aggregate the S samples --------------------------
                 pos_aggr_Nm_3 = torch.median(pos_gen_traj_S_T_Nm_3[:, -1, :, :], dim=0).values
@@ -325,12 +328,18 @@ class FlowModule(pl.LightningModule):
             
             self.results_R.append(data.to("cpu"))
 
-    def align_and_rotate_samples(self, data, pos_gen_S_T_Nm_3: torch.Tensor):
-        """Align and rotate trajectory samples using the last time step"""
+    def align_and_rotate_samples(self, data, pos_gen_S_T_Nm_3: torch.Tensor, ref_pos_Nm_3: torch.Tensor):
+        """Align and rotate trajectory samples using the last time step
+        
+        Args:
+            data: Input data object
+            pos_gen_S_T_Nm_3: Generated trajectory [Samples, Time, Nm_atoms, 3]
+            ref_pos_Nm_3: Reference structure [Nm_atoms, 3] to align to
+        """
         # Use only the last time step for alignment
         pos_gen_S_Nm_3 = pos_gen_S_T_Nm_3[:, -1, :, :]  # [Samples, Nm_atoms, 3]
         
-        aligned_S_Nm_3, rmsd_S = kabsch_align_batched(data.pos, pos_gen_S_Nm_3)
+        aligned_S_Nm_3, rmsd_S = kabsch_align_batched(ref_pos_Nm_3, pos_gen_S_Nm_3)
         
         # Copy aligned positions back to the trajectory
         pos_gen_S_T_Nm_3[:, -1, :, :] = aligned_S_Nm_3
