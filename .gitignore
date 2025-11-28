@@ -16,3 +16,4 @@ test_neb_integration.py
 delete/
 slurm/
 temp.py
+test_per_neb_metrics.py
