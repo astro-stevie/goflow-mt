@@ -55,6 +55,14 @@ def create_ase_molecule(atomic_numbers: np.ndarray, positions: np.ndarray):
 def rmsd_loss(pred_N_3, gt_N_3):
     return torch.linalg.vector_norm(pred_N_3 - gt_N_3, dim=1).mean()
 
+@torch.no_grad()
+def rmsd_error(pred_I_N_3, gt_I_N_3):
+    err_I = torch.linalg.vector_norm(pred_I_N_3 - gt_I_N_3, dim=1)
+    print(f"Shape of Error: {pred_I_N_3.shape[0]}")
+    assert err_I.shape == (pred_I_N_3.shape[0],)
+    return err_I
+
+
 def rmsd_median_loss(pred_N_3, gt_N_3):
     return torch.median(torch.linalg.vector_norm(pred_N_3 - gt_N_3, dim=1))
 
