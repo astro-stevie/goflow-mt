@@ -178,19 +178,27 @@ def evaluate_geometry(
     data: Data,
     r_threshold: float = 1.2,
     epsilon: float = 1.0,
+    neb_image_idx: Optional[int] = None
 ) -> Dict[str, float]:
     """
     Parameters:
     data (torch_geometric.data.Data): Reaction data
     r_threshold (float): Distance threshold for steric clash penalty.
     epsilon (float): Scaling factor for the clash penalty.
+    neb_image_idx (Optional[int]): If provided, evaluate this specific NEB image index.
+                                   Otherwise, evaluate the transition state.
 
     Returns:
     Dict[str, float]
     """
     # RMSE error
+    # Handle per-NEB-image evaluation
+    if neb_image_idx is not None and hasattr(data, 'pos_gen_neb_I_T_Nm_3'):
+        # Evaluate specific NEB image
+        gt_pos_N_3_raw = data.pos[:, neb_image_idx, :]  # [N_atoms, 3]
+        pred_pos_raw = data.pos_gen_neb_I_T_Nm_3[neb_image_idx, -1, :, :]  # [N_atoms, 3]
     # Handle both old format (data.pos with multiple dimensions) and NEB format (data.pos_N_3_I)
-    if hasattr(data, 'pos_N_3_I'):
+    elif hasattr(data, 'pos_N_3_I'):
         # NEB format: use actual transition state index if available
         if hasattr(data, 'ts_idx_used'):
             ts_idx = data.ts_idx_used
@@ -283,6 +291,7 @@ class TestAndSaveResultsAfterTrainingCallback(L.Callback):
         inference_time_per_rxn = (time.perf_counter() - self._test_start_time) / len(module.results_R)
         self._test_start_time = None
         
+        # Evaluate overall (transition state) metrics
         pd_results_R = [evaluate_geometry(data) for data in module.results_R]
         pd_results_df = pd.DataFrame(pd_results_R)
         pd_results_df.to_csv(self.save_path / 'test_results.csv', index=False, float_format='%.3f')
@@ -292,6 +301,24 @@ class TestAndSaveResultsAfterTrainingCallback(L.Callback):
 
         self.save_stats_to_csv(means, module)
         self.save_test_predictions(module)
+        
+        # Evaluate per-NEB-image metrics if available
+        if len(module.results_R) > 0 and hasattr(module.results_R[0], 'pos_gen_neb_I_T_Nm_3'):
+            num_neb_images = module.results_R[0].pos_gen_neb_I_T_Nm_3.shape[0]
+            log.info(f"Calculating per-NEB-image metrics for {num_neb_images} images...")
+            
+            for neb_idx in range(num_neb_images):
+                pd_results_neb_R = [evaluate_geometry(data, neb_image_idx=neb_idx) for data in module.results_R]
+                pd_results_neb_df = pd.DataFrame(pd_results_neb_R)
+                
+                # Save per-image results
+                csv_path = self.save_path / f'test_results_neb_image_{neb_idx}.csv'
+                pd_results_neb_df.to_csv(csv_path, index=False, float_format='%.3f')
+                
+                # Log summary statistics for this NEB image
+                means_neb = pd_results_neb_df.mean()
+                log.info(f"NEB Image {neb_idx} - MAE: {means_neb['mae']:.4f}, RMSE: {means_neb['rmse']:.4f}, "
+                        f"Angle: {means_neb['angle_error']:.2f}, Dihedral: {means_neb['dihedral_error']:.2f}")
 
 
 class EMALossCallback(L.Callback):
