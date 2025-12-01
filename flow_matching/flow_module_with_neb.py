@@ -87,7 +87,7 @@ class FlowModule(pl.LightningModule):
     
     def get_perturbed_flow_point_and_time_with_neb(self, batch: Data):
 
-        num_atoms, neb_img, dim = batch.pos.shape
+        num_atoms, neb_img, dim = batch.pos_N_3_I.shape
         neb_img_subset = self.neb_img_subset # Determine which NEB images to use
 
          # Accept string sentinel 'all' or 'auto'
@@ -122,7 +122,7 @@ class FlowModule(pl.LightningModule):
                 end_idx = start_idx + num_atoms_in_graph
 
                 # Extract TS positions for this reaction
-                x_1_N_3_list.append(batch.pos[start_idx:end_idx, ts_idx, :])
+                x_1_N_3_list.append(batch.pos_N_3_I[start_idx:end_idx, :, ts_idx])
                 start_idx = end_idx
 
             x_1_N_3 = torch.cat(x_1_N_3_list, dim=0)
@@ -148,7 +148,7 @@ class FlowModule(pl.LightningModule):
             t_G_I = []
             neb_imgs_I_G = []
             for neb_idx in neb_img_subset:
-                x_1_N_3 = batch.pos[:, neb_idx, :]
+                x_1_N_3 = batch.pos_N_3_I[:, :, neb_idx]
                 x_0_N_3 = torch.randn_like(x_1_N_3, device=self.device)
 
                 t_G = torch.rand(batch.num_graphs, 1, device=self.device)
@@ -257,11 +257,6 @@ class FlowModule(pl.LightningModule):
                       prog_bar=True, on_step=False, on_epoch=True, batch_size=batch.num_graphs)
         return loss
 
-    def model_output(self, x_t_N_3, batch: Data, t_G: Tensor) -> Tensor:
-        h_N_D, X_N_L_D = self.representation(x_t_N_3, t_G, batch)
-        atom_N_3 = self.atomwise_3D_out_layer(h_N_D, X_N_L_D[:, :3, :])
-        return atom_N_3
-
       # S... number of samples
     def test_step(self, batch: Batch, batch_idx: int):
 
@@ -269,7 +264,7 @@ class FlowModule(pl.LightningModule):
         torch.manual_seed(self.seed)
         np.random.seed(self.seed)
         
-        num_atoms, num_neb_images, dim = batch.pos.shape
+        num_atoms, num_neb_images, dim = batch.pos_N_3_I.shape
         neb_imgs_subset = self.neb_img_subset # Determine which NEB images to use
 
          # Accept string sentinel 'all' or 'auto'
@@ -305,7 +300,7 @@ class FlowModule(pl.LightningModule):
             for neb_idx in range(len(neb_imgs_subset)):
                 pos_gen_traj_S_T_Nm_3 = pos_gen_traj_S_T_I_N_3[:, :, neb_idx, mask]
 
-                pos_gt_Nm_3 = data.pos[:, neb_idx, :]
+                pos_gt_Nm_3 = data.pos_N_3_I[:, :, neb_idx]
                 pos_gen_traj_Sv_T_Nm_3, rmsd_S = self.align_and_rotate_samples(data, pos_gen_traj_S_T_Nm_3, pos_gt_Nm_3)
 
                 # -------------------------- START: Aggregate the S samples --------------------------

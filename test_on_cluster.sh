@@ -10,15 +10,15 @@
 source .venv/bin/activate
 
 MODEL_PATHS=(
-    "logs/train_test_neb_all_323235/runs/2025-11-27_18-03-36/checkpoints/epoch_310.ckpt"
+    "logs/train_test_neb_all_323433/runs/2025-11-28_15-39-16/checkpoints/epoch_172.ckpt"
 )
 
 CSV=$(IFS=,; echo "${MODEL_PATHS[*]}")
 
 uv run flow_train.py -m \
-    experiment=flow2 \
+    experiment=flow2_neb \
     model=flow_neb \
-    data=rdb7 \
+    data=t1x \
     model.neb_img_subset=all \
     logger=[wandb,csv] \
     model.num_samples=25 \
@@ -26,6 +26,6 @@ uv run flow_train.py -m \
     trainer=gpu \
     model.save_all_samples=True \
     task_name=test_neb_all_${SLURM_JOB_ID} \
-    project=goflow-neb-rdb7 \
+    project=goflow-neb-t1x \
     train=false \
     custom_model_weight_path="$CSV"

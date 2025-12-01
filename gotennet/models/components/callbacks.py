@@ -195,7 +195,7 @@ def evaluate_geometry(
     # Handle per-NEB-image evaluation
     if neb_image_idx is not None and hasattr(data, 'pos_gen_neb_I_T_Nm_3'):
         # Evaluate specific NEB image
-        gt_pos_N_3_raw = data.pos[:, neb_image_idx, :]  # [N_atoms, 3]
+        gt_pos_N_3_raw = data.pos_N_3_I[:, :,neb_image_idx]  # [N_atoms, 3]
         pred_pos_raw = data.pos_gen_neb_I_T_Nm_3[neb_image_idx, -1, :, :]  # [N_atoms, 3]
     # Handle both old format (data.pos with multiple dimensions) and NEB format (data.pos_N_3_I)
     elif hasattr(data, 'pos_N_3_I'):
