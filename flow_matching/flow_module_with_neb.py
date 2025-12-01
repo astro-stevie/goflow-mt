@@ -77,6 +77,10 @@ class FlowModule(pl.LightningModule):
 
         self.scheduler = scheduler
 
+        # Note: torch.compile() disabled due to incompatibility with torch_cluster custom ops
+        # if hasattr(torch, 'compile'):
+        #     self.representation = torch.compile(representation)
+
         self.save_hyperparameters(ignore=['representation'])
 
         # save results in test_step
@@ -87,18 +91,17 @@ class FlowModule(pl.LightningModule):
     
     def get_perturbed_flow_point_and_time_with_neb(self, batch: Data):
 
-        num_atoms, neb_img, dim = batch.pos_N_3_I.shape
+        num_atoms, dim, neb_img = batch.pos_N_3_I.shape
         neb_img_subset = self.neb_img_subset # Determine which NEB images to use
 
-         # Accept string sentinel 'all' or 'auto'
+        # Accept string sentinel 'all' or 'auto'
         if isinstance(neb_img_subset, str):
             if neb_img_subset.lower() in ['all', 'auto']:
                 neb_img_subset = list(range(0, neb_img))
             else:
                 raise ValueError(f"Invalid neb_img_subset string: {neb_img_subset}")
-    
             
-        # Case 1: Empty subset means use only TS (one image per reaction)
+        # Case 1: Empty subset or None means use only TS (one image per reaction)
         if neb_img_subset is None or len(neb_img_subset) == 0:
             # Get TS indices for each reaction in batch
             if hasattr(batch, 'ts_idx'):
@@ -176,11 +179,6 @@ class FlowModule(pl.LightningModule):
         # print("NEB images used in this batch (train_val_step):", torch.unique(neb_img_I_G))
         atom_I_N_3 = self.model_output_with_neb(x_t_I_N_3, batch, t_I_G, neb_img_I_G)
 
-        # Optional: Weight loss by proximity to transition state if ts_idx is available
-        if hasattr(batch, 'ts_idx'):
-            # TODO: Implement TS-weighted loss when rmsd_loss supports per-sample losses
-            pass
-
         rmsd_loss_I = []
         rmsd_error_I = [] 
         for i in range(neb_img_I_G.shape[0]):
@@ -190,7 +188,29 @@ class FlowModule(pl.LightningModule):
             rmsd_loss_I.append(rmsd_loss_value)
             rmsd_error_I.append(rmsd_error_value)
 
-        loss = torch.stack(rmsd_loss_I).mean()
+        # Add TS weighting
+        if hasattr(batch, 'ts_idx') and neb_img_I_G.shape[0] > 1:
+            # Convert ts_indices to tensor if it's a list
+            if isinstance(batch.ts_idx, list):
+                ts_indices = torch.tensor(batch.ts_idx, device=self.device, dtype=torch.float32)
+            else:
+                ts_indices = batch.ts_idx.float().to(self.device)
+            
+            all_indices = torch.unique(neb_img_I_G).float()
+            weights = []
+            for neb_idx in all_indices:
+                # Exponential decay from TS: average distance to all TS in batch
+                dist = torch.abs(neb_idx - ts_indices).mean()
+                weight = torch.exp(-dist / 2.0)
+                weights.append(weight)
+            weights = torch.stack(weights)
+            weights = weights / weights.sum()
+            
+            # Apply weights to losses (ensure alignment with rmsd_loss_I indexing)
+            weighted_losses = [w * l for w, l in zip(weights, rmsd_loss_I)]
+            loss = sum(weighted_losses)
+        else:
+            loss = torch.stack(rmsd_loss_I).mean()
 
         metrics = {}
         metrics['train/val_loss'] = loss.detach()
@@ -264,15 +284,26 @@ class FlowModule(pl.LightningModule):
         torch.manual_seed(self.seed)
         np.random.seed(self.seed)
         
-        num_atoms, num_neb_images, dim = batch.pos_N_3_I.shape
+        num_atoms, dim, num_neb_images = batch.pos_N_3_I.shape
         neb_imgs_subset = self.neb_img_subset # Determine which NEB images to use
+        print("NEB images used: ", neb_imgs_subset)
 
-         # Accept string sentinel 'all' or 'auto'
+        # Accept string sentinel 'all' or 'auto'
         if isinstance(neb_imgs_subset, str):
             if neb_imgs_subset.lower() in ['all', 'auto']:
                 neb_imgs_subset = list(range(0, num_neb_images))
             else:
                 raise ValueError(f"Invalid neb_img_subset string: {neb_imgs_subset}")
+        elif neb_imgs_subset is None:
+            # Default: use only transition state if available, otherwise use all images
+            if hasattr(batch, 'ts_idx'):
+                # Get unique TS indices from batch
+                ts_indices = batch.ts_idx if isinstance(batch.ts_idx, (list, tuple)) else [batch.ts_idx.item()]
+                neb_imgs_subset = list(set(ts_indices))
+            else:
+                # Fallback: use middle image (assumed to be TS)
+                neb_imgs_subset = [num_neb_images // 2]
+            print(f"NEB images subset defaulted to: {neb_imgs_subset}")
             
     
         t_T = torch.linspace(0, 1, steps=self.num_steps, device=self.device)

@@ -28,7 +28,9 @@ uv run flow_train.py \
     model.num_samples=50 \
     task_name=train_test_neb_all_${SLURM_JOB_ID} \
     project=goflow-neb-t1x \
-    test=true
+    test=true \
+    trainer.precision="16-mixed" \
+    trainer.gradient_clip_val=1.0
 
 echo "NEB training experiment complete!"
 echo "Check logs at: /home/stephg/goflow/logs/train_test_neb_all_${SLURM_JOB_ID}.out"
