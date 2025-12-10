@@ -304,21 +304,48 @@ class TestAndSaveResultsAfterTrainingCallback(L.Callback):
         
         # Evaluate per-NEB-image metrics if available
         if len(module.results_R) > 0 and hasattr(module.results_R[0], 'pos_gen_neb_I_T_Nm_3'):
-            num_neb_images = module.results_R[0].pos_gen_neb_I_T_Nm_3.shape[0]
-            log.info(f"Calculating per-NEB-image metrics for {num_neb_images} images...")
+            # Collect all unique NEB indices used across reactions
+            all_neb_indices = set()
+            for data in module.results_R:
+                if hasattr(data, 'neb_indices_used'):
+                    all_neb_indices.update(data.neb_indices_used)
+                else:
+                    # Fallback: use all indices in this reaction's tensor
+                    all_neb_indices.update(range(data.pos_gen_neb_I_T_Nm_3.shape[0]))
             
-            for neb_idx in range(num_neb_images):
-                pd_results_neb_R = [evaluate_geometry(data, neb_image_idx=neb_idx) for data in module.results_R]
-                pd_results_neb_df = pd.DataFrame(pd_results_neb_R)
+            all_neb_indices = sorted(list(all_neb_indices))
+            
+            if len(all_neb_indices) > 1:  # Only log per-image if multiple images
+                log.info(f"Calculating per-NEB-image metrics for {len(all_neb_indices)} images...")
                 
-                # Save per-image results
-                csv_path = self.save_path / f'test_results_neb_image_{neb_idx}.csv'
-                pd_results_neb_df.to_csv(csv_path, index=False, float_format='%.3f')
-                
-                # Log summary statistics for this NEB image
-                means_neb = pd_results_neb_df.mean()
-                log.info(f"NEB Image {neb_idx} - MAE: {means_neb['mae']:.4f}, RMSE: {means_neb['rmse']:.4f}, "
-                        f"Angle: {means_neb['angle_error']:.2f}, Dihedral: {means_neb['dihedral_error']:.2f}")
+                for actual_neb_idx in all_neb_indices:
+                    pd_results_neb_R = []
+                    for data in module.results_R:
+                        # Only evaluate if this NEB image was used for this reaction
+                        if hasattr(data, 'neb_indices_used') and actual_neb_idx not in data.neb_indices_used:
+                            continue
+                        
+                        # Find the index in the neb_indices_used list
+                        if hasattr(data, 'neb_indices_used'):
+                            local_idx = list(data.neb_indices_used).index(actual_neb_idx)
+                        else:
+                            local_idx = actual_neb_idx
+                        
+                        # Only evaluate if local_idx is in bounds
+                        if local_idx < data.pos_gen_neb_I_T_Nm_3.shape[0]:
+                            pd_results_neb_R.append(evaluate_geometry(data, neb_image_idx=local_idx))
+                    
+                    if len(pd_results_neb_R) > 0:
+                        pd_results_neb_df = pd.DataFrame(pd_results_neb_R)
+                        
+                        # Save per-image results
+                        csv_path = self.save_path / f'test_results_neb_image_{actual_neb_idx}.csv'
+                        pd_results_neb_df.to_csv(csv_path, index=False, float_format='%.3f')
+                        
+                        # Log summary statistics for this NEB image
+                        means_neb = pd_results_neb_df.mean()
+                        log.info(f"NEB Image {actual_neb_idx} - MAE: {means_neb['mae']:.4f}, RMSE: {means_neb['rmse']:.4f}, "
+                                f"Angle: {means_neb['angle_error']:.2f}, Dihedral: {means_neb['dihedral_error']:.2f}")
 
 
 class EMALossCallback(L.Callback):

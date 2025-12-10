@@ -22,11 +22,10 @@ uv run flow_train.py \
     experiment=flow2_neb \
     model=flow_neb \
     data=t1x \
-    model.neb_img_subset=all \
     logger=[wandb,csv] \
     model.num_steps=25 \
     model.num_samples=50 \
-    task_name=train_test_neb_all_${SLURM_JOB_ID} \
+    task_name=train_test_neb_TS_${SLURM_JOB_ID} \
     project=goflow-neb-t1x \
     test=true \
     trainer.gradient_clip_val=1.0
