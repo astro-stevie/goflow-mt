@@ -308,7 +308,7 @@ class FlowModule(pl.LightningModule):
             assert len(ts_indices) == batch.num_graphs, \
                 f"Expected {batch.num_graphs} TS indices, got {len(ts_indices)}"
             
-            print("TS-only mode: per-reaction TS indices", ts_indices)
+            # print("DEBUG TS-only mode: per-reaction TS indices", ts_indices)
             
             # Generate one image per reaction (no stacking across images)
             t_T = torch.linspace(0, 1, steps=self.num_steps, device=self.device)
