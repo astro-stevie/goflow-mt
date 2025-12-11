@@ -66,6 +66,85 @@ def rmsd_error(pred_I_N_3, gt_I_N_3):
 def rmsd_median_loss(pred_N_3, gt_N_3):
     return torch.median(torch.linalg.vector_norm(pred_N_3 - gt_N_3, dim=1))
 
+
+def spring_loss(pos_gen_I_N_3: Tensor, neb_idx_I_G: Tensor, batch_indices_N: Tensor = None, 
+                spring_constant: float = 1.0) -> Tensor:
+    """
+    Compute spring forces between adjacent NEB images to enforce equal spacing.
+    
+    In NEB, spring forces connect neighboring images along the reaction path.
+    This loss encourages the predicted structures to maintain consistent spacing
+    between consecutive NEB images, which stabilizes pathway exploration.
+    
+    Args:
+        pos_gen_I_N_3: Generated positions [I, N, 3] where I is number of NEB images, N is atoms
+        neb_idx_I_G: NEB image indices [I, G] where I is images, G is graphs/molecules
+        batch_indices_N: Optional [N] batch indices to separate molecules in batch
+        spring_constant: Strength of spring coupling (default: 1.0)
+    
+    Returns:
+        Scalar loss tensor
+    """
+    if pos_gen_I_N_3.shape[0] < 2:
+        # No adjacent images to connect with springs
+        return torch.tensor(0.0, device=pos_gen_I_N_3.device)
+    
+    # Handle 1D or 2D neb_idx
+    if neb_idx_I_G.dim() == 1:
+        neb_idx_I = neb_idx_I_G
+    else:
+        # Use first graph's image indices (all graphs share same NEB image subset)
+        neb_idx_I = neb_idx_I_G[:, 0]
+    
+    # Compute spacing indices to find adjacent images
+    neb_idx_sorted, sort_idx = torch.sort(neb_idx_I)
+    pos_sorted_I_N_3 = pos_gen_I_N_3[sort_idx]
+    
+    spring_loss_total = 0.0
+    
+    # Iterate through adjacent image pairs
+    for i in range(len(neb_idx_sorted) - 1):
+        pos_curr_N_3 = pos_sorted_I_N_3[i]
+        pos_next_N_3 = pos_sorted_I_N_3[i + 1]
+        
+        # Vector from current to next image (the "spring" direction)
+        spring_vec_N_3 = pos_next_N_3 - pos_curr_N_3  # [N, 3]
+        
+        # Spring force magnitude: minimize distance between images
+        # (springs want to maintain equal spacing along path)
+        spring_dist = torch.linalg.vector_norm(spring_vec_N_3, dim=1)  # [N]
+
+        # Add this debug to spring_loss() temporarily:
+        avg_distance = spring_dist.mean().item()
+        print(f"Avg distance between consecutive images: {avg_distance:.3f}Å")
+        
+        # Spring energy: 0.5 * k * x^2, we use k=spring_constant
+        spring_energy = 0.5 * spring_constant * (spring_dist ** 2)
+        
+        spring_loss_total = spring_loss_total + spring_energy.mean()
+    
+    return spring_loss_total
+
+
+def spring_force_vector(pos_curr_N_3: Tensor, pos_next_N_3: Tensor, 
+                        spring_constant: float = 1.0) -> Tensor:
+    """
+    Compute spring force vectors between adjacent NEB images.
+    
+    Returns the gradient of spring potential (force direction) for equilibrating images.
+    
+    Args:
+        pos_curr_N_3: Current image positions [N, 3]
+        pos_next_N_3: Next image positions [N, 3]
+        spring_constant: Spring constant
+    
+    Returns:
+        Force vectors [N, 3]
+    """
+    spring_vec_N_3 = pos_next_N_3 - pos_curr_N_3
+    spring_force = spring_constant * spring_vec_N_3
+    return spring_force
+
 def get_shortest_path_fast_batched_x_1(x_0_N_3, x_1_N_3, batch):
     # x_0_N_3, x_1_N_3 are tensors of shape (N, 3)
     # batch.batch is a 1D tensor of length N with group indices.
