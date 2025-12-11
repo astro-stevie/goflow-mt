@@ -7,7 +7,7 @@ from torch_geometric.data import Data, Batch
 import lightning.pytorch as pl
 from torchdiffeq import odeint
 
-from flow_matching.utils import get_shortest_path_fast_batched_x_1, rmsd_error, rmsd_loss, get_substruct_matches, get_min_dmae_match_torch_batch, kabsch_align_batched
+from flow_matching.utils import get_shortest_path_fast_batched_x_1, rmsd_error, rmsd_loss, spring_loss, spring_force_vector, get_substruct_matches, get_min_dmae_match_torch_batch, kabsch_align_batched
 import numpy as np
 
 from gotennet.models.components.outputs import Atomwise3DOut
@@ -45,6 +45,8 @@ class FlowModule(pl.LightningModule):
             neb_img_subset: Optional[list] = None,
             sample_method: str = "gaussian",
             save_all_samples: bool = True,
+            lambda_spring: float = 0.0,
+            spring_constant: float = 1.0,
             **kwargs
     ):
         super().__init__()
@@ -70,6 +72,10 @@ class FlowModule(pl.LightningModule):
         self.input_contribution = input_contribution
         self.save_predictions = save_predictions
         self.save_all_samples = save_all_samples
+
+        # NEB spring force parameters
+        self.lambda_spring = lambda_spring
+        self.spring_constant = spring_constant
 
         self.lambda_cf = 0.0
         self.seed = seed
@@ -188,33 +194,50 @@ class FlowModule(pl.LightningModule):
             rmsd_loss_I.append(rmsd_loss_value)
             rmsd_error_I.append(rmsd_error_value)
 
-        # Add TS weighting
-        if hasattr(batch, 'ts_idx') and neb_img_I_G.shape[0] > 1:
-            # Convert ts_indices to tensor if it's a list
-            if isinstance(batch.ts_idx, list):
-                ts_indices = torch.tensor(batch.ts_idx, device=self.device, dtype=torch.float32)
-            else:
-                ts_indices = batch.ts_idx.float().to(self.device)
+        # Compute spring loss for multi-image training (enforces equal spacing along path)
+        spring_loss_value = torch.tensor(0.0, device=self.device)
+        if neb_img_I_G.shape[0] > 1 and self.lambda_spring > 0:
+            # Compute spring forces between predicted images
+            # atom_I_N_3 contains the predicted velocity/force vectors for each image [I, N, 3]
+            # neb_img_I_G contains image indices [I, G]
+            spring_loss_value = spring_loss(atom_I_N_3, neb_img_I_G, 
+                                           spring_constant=self.spring_constant)
+
+        # # Add TS weighting
+        # if hasattr(batch, 'ts_idx') and neb_img_I_G.shape[0] > 1:
+        #     # Convert ts_indices to tensor if it's a list
+        #     if isinstance(batch.ts_idx, list):
+        #         ts_indices = torch.tensor(batch.ts_idx, device=self.device, dtype=torch.float32)
+        #     else:
+        #         ts_indices = batch.ts_idx.float().to(self.device)
             
-            all_indices = torch.unique(neb_img_I_G).float()
-            weights = []
-            for neb_idx in all_indices:
-                # Exponential decay from TS: average distance to all TS in batch
-                dist = torch.abs(neb_idx - ts_indices).mean()
-                weight = torch.exp(-dist / 2.0)
-                weights.append(weight)
-            weights = torch.stack(weights)
-            weights = weights / weights.sum()
+        #     all_indices = torch.unique(neb_img_I_G).float()
+        #     weights = []
+        #     for neb_idx in all_indices:
+        #         # Exponential decay from TS: average distance to all TS in batch
+        #         dist = torch.abs(neb_idx - ts_indices).mean()
+        #         weight = torch.exp(-dist / 2.0)
+        #         weights.append(weight)
+        #     weights = torch.stack(weights)
+        #     weights = weights / weights.sum()
             
-            # Apply weights to losses (ensure alignment with rmsd_loss_I indexing)
-            weighted_losses = [w * l for w, l in zip(weights, rmsd_loss_I)]
-            loss = sum(weighted_losses)
-        else:
-            loss = torch.stack(rmsd_loss_I).mean()
+        #     # Apply weights to losses (ensure alignment with rmsd_loss_I indexing)
+        #     weighted_losses = [w * l for w, l in zip(weights, rmsd_loss_I)]
+        #     loss = sum(weighted_losses)
+        # else:
+        loss = torch.stack(rmsd_loss_I).mean()
+
+        # Add spring loss to total loss, lambda is the weighting factor
+        if self.lambda_spring > 0:
+            loss = loss + self.lambda_spring * spring_loss_value
 
         metrics = {}
         metrics['train/val_loss'] = loss.detach()
         metrics['train/loss_per_batch_mean'] = torch.stack(rmsd_loss_I).mean().detach()
+        if self.lambda_spring > 0:
+            metrics['train/spring_loss'] = spring_loss_value.detach()
+            # metrics['train/loss_with_spring'] = loss.detach()
+        
         for i, (l, e) in enumerate(zip(rmsd_loss_I, rmsd_error_I)):
             # Per-molecule: per-graph mean then averaged across graphs
             counts = torch.bincount(batch.batch, minlength=batch.num_graphs).to(e.dtype).unsqueeze(1)  # (G,1)

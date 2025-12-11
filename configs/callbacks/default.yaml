@@ -39,6 +39,12 @@ test_and_save_after_training:
 #learning_rate_monitor:
 #  _target_: lightning.pytorch.callbacks.LearningRateMonitor
 
+# Optional: Log spring force metrics
+learning_rate_monitor:
+  - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+    init_args:
+      logging_interval: step
+
 callbacks:
   train_loss_spike:
     _target_: gotennet.models.components.callbacks.TrainLossSpikeCallback

@@ -23,12 +23,15 @@ uv run flow_train.py \
     model=flow_neb \
     data=t1x \
     logger=[wandb,csv] \
+    model.neb_img_subset=all \
     model.num_steps=25 \
     model.num_samples=50 \
-    task_name=train_test_neb_TS_${SLURM_JOB_ID} \
-    project=goflow-neb-t1x \
+    model.lambda_spring=0.05 \
+    model.spring_constant=1.0 \
+    task_name=train_test_neb_all_0.05l_1sc_${SLURM_JOB_ID} \
+    project=goflow-neb-springF \
     test=true \
     trainer.gradient_clip_val=1.0
 
 echo "NEB training experiment complete!"
-echo "Check logs at: /home/stephg/goflow/logs/train_test_neb_all_${SLURM_JOB_ID}.out"
+echo "Check logs at: /home/stephg/goflow/logs/train_test_neb_all_0.05l_1sc_${SLURM_JOB_ID}.out"

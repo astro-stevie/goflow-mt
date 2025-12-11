@@ -15,6 +15,9 @@ seed: 1
 neb_img_subset: null  # default: Use only TS image if available otherwise all
 save_all_samples: True
 
+lambda_spring: 0.1               # Weight of spring loss (0.0 to disable)
+spring_constant: 1.0             # Spring stiffness (0.5-2.0 recommended)
+
 output:
   n_hidden: 64
 
