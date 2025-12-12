@@ -70,11 +70,12 @@ def rmsd_median_loss(pred_N_3, gt_N_3):
 def spring_loss(pos_gen_I_N_3: Tensor, neb_idx_I_G: Tensor, batch_indices_N: Tensor = None, 
                 spring_constant: float = 1.0) -> Tensor:
     """
-    Compute spring forces between adjacent NEB images to enforce equal spacing.
+    Compute spring forces between adjacent NEB images with optional target spacing.
     
     In NEB, spring forces connect neighboring images along the reaction path.
-    This loss encourages the predicted structures to maintain consistent spacing
-    between consecutive NEB images, which stabilizes pathway exploration.
+    When pos_target_I_N_3 is provided, this encourages the predicted structures to
+    match the spacing pattern of the target (ground truth) images. This is useful
+    when the NEB pathway has non-uniform spacing (e.g., denser near transition state).
     
     Args:
         pos_gen_I_N_3: Generated positions [I, N, 3] where I is number of NEB images, N is atoms
@@ -111,17 +112,27 @@ def spring_loss(pos_gen_I_N_3: Tensor, neb_idx_I_G: Tensor, batch_indices_N: Ten
         spring_vec_N_3 = pos_next_N_3 - pos_curr_N_3  # [N, 3]
         
         # Spring force magnitude: minimize distance between images
-        # (springs want to maintain equal spacing along path)
         spring_dist = torch.linalg.vector_norm(spring_vec_N_3, dim=1)  # [N]
 
-        # Add this debug to spring_loss() temporarily:
+        # debug
         avg_distance = spring_dist.mean().item()
-        print(f"Avg distance between consecutive images: {avg_distance:.3f}Å")
-        
-        # Spring energy: 0.5 * k * x^2, we use k=spring_constant
+        print(f"Average distance between NEB images {neb_idx_sorted[i].item()} and {neb_idx_sorted[i+1].item()}: {avg_distance:.3f} Å")
+
         spring_energy = 0.5 * spring_constant * (spring_dist ** 2)
         
-        spring_loss_total = spring_loss_total + spring_energy.mean()
+        if batch_indices_N is not None:
+            # Compute spring loss per molecule, then average across molecules
+            num_graphs = batch_indices_N.max().item() + 1
+            spring_loss_per_pair = 0.0
+            for g in range(num_graphs):
+                mask = (batch_indices_N == g)
+                spring_energy_g = spring_energy[mask]
+                spring_loss_per_pair += spring_energy_g.mean()
+            spring_loss_per_pair = spring_loss_per_pair / num_graphs
+            spring_loss_total += spring_loss_per_pair
+        else:
+            # Fallback: average over all atoms
+            spring_loss_total += spring_energy.mean()
     
     return spring_loss_total
 
