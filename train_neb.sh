@@ -28,7 +28,8 @@ uv run flow_train.py \
     model.num_samples=50 \
     model.lambda_spring=0.01 \
     model.spring_constant=1.0 \
-    task_name=train_neb_GT_springF_${SLURM_JOB_ID} \
+    model.spring_loss_schedule=cosine \
+    task_name=train_neb_GT_cos_springF_${SLURM_JOB_ID} \
     project=goflow-neb-springF \
     test=true \
     trainer.gradient_clip_val=1.0 \
