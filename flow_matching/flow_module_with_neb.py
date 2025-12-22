@@ -48,6 +48,8 @@ class FlowModule(pl.LightningModule):
             save_all_samples: bool = True,
             lambda_spring: float = 0.0,
             spring_constant: float = 1.0,
+            spring_loss_warmup_steps: int = 0,
+            spring_loss_schedule: str = "linear",
             **kwargs
     ):
         super().__init__()
@@ -77,6 +79,8 @@ class FlowModule(pl.LightningModule):
         # NEB spring force parameters
         self.lambda_spring = lambda_spring
         self.spring_constant = spring_constant
+        self.spring_loss_warmup_steps = spring_loss_warmup_steps
+        self.spring_loss_schedule = spring_loss_schedule
 
         self.lambda_cf = 0.0
         self.seed = seed
@@ -93,6 +97,34 @@ class FlowModule(pl.LightningModule):
         # save results in test_step
         self.results_R = []
         self.neb_img_subset = neb_img_subset
+    
+    def get_spring_loss_weight(self) -> float:
+        """
+        Compute annealed weight for spring loss based on training progress.
+        Implements warmup followed by optional scheduling.
+        
+        Returns:
+            Weight multiplier in [0, 1]
+        """
+        global_step = self.global_step
+        
+        if global_step < self.spring_loss_warmup_steps:
+            # Linear warmup phase
+            weight = global_step / max(self.spring_loss_warmup_steps, 1)
+        elif self.spring_loss_schedule == "linear":
+            # Already at full weight after warmup
+            weight = 1.0
+        elif self.spring_loss_schedule == "cosine":
+            # Cosine annealing (optional: for gentle increase)
+            progress = (global_step - self.spring_loss_warmup_steps) / max(
+                self.trainer.max_steps - self.spring_loss_warmup_steps, 1
+            )
+            progress = min(progress, 1.0)
+            weight = 0.5 * (1 + torch.cos(torch.tensor(torch.pi * progress))).item()
+        else:
+            weight = 1.0
+        
+        return weight
     
     ### New methods for NEB image conditioning
     
@@ -189,9 +221,10 @@ class FlowModule(pl.LightningModule):
         # ------------------------------------------- DEBUGGING ------------------------------------------- 
         # Add this debug to train_val_step_with_neb:
         # print(f"x_t_I_N_3 shape: {x_t_I_N_3.shape}")
+        # print(f"atom_I_N_3 shape: {atom_I_N_3.shape}")
         # print(f"neb_img_I_G shape: {neb_img_I_G.shape}")
         # print(f"neb_img_I_G unique values: {torch.unique(neb_img_I_G)}")
-        # print(f"batch.num_graphs: {batch.num_graphs}")
+        print(f"batch.num_graphs: {batch.num_graphs}")
         print(f"batch.pos_N_3_I shape: {batch.pos_N_3_I.shape}")
         # Check atoms per graph
         # atoms_per_graph = scatter(torch.ones(batch.pos_N_3_I.shape[0], device=batch.batch.device), 
@@ -210,17 +243,7 @@ class FlowModule(pl.LightningModule):
             # print(f"NEB image {neb_img_I_G[i]}: RMSD Loss = {rmsd_loss_value}, RMSD Error = {rmsd_error_value}")
             rmsd_loss_I.append(rmsd_loss_value)
             rmsd_error_I.append(rmsd_error_value)
-
-        spring_loss_value = torch.tensor(0.0, device=self.device)
-        if neb_img_I_G.shape[0] > 1 and self.lambda_spring > 0:
-            # Extract ground truth positions for NEB images as reference
-            neb_idx_I = neb_img_I_G[:, 0]  # Get image indices (same for all graphs in batch)
-            pos_gt_I_N_3 = torch.stack([batch.pos_N_3_I[:, :, idx] for idx in neb_idx_I])
-            spring_loss_value = spring_loss(pos_gt_I_N_3, neb_img_I_G, 
-                                           batch_indices_N=batch.batch,
-                                           spring_constant=self.spring_constant)
-                                
-
+                
         # Add TS weighting
         if hasattr(batch, 'ts_idx') and neb_img_I_G.shape[0] > 1:
             # Convert ts_indices to tensor if it's a list
@@ -245,9 +268,27 @@ class FlowModule(pl.LightningModule):
         else:
             loss = torch.stack(rmsd_loss_I).mean()
 
+        spring_loss_value = torch.tensor(0.0, device=self.device)
+        if neb_img_I_G.shape[0] > 1 and self.lambda_spring > 0:
+            pos_pred_I_N_3 = x_t_I_N_3 + atom_I_N_3
+            spring_loss_value = spring_loss(pos_pred_I_N_3, neb_img_I_G, 
+                                           batch_indices_N=batch.batch,
+                                           spring_constant=self.spring_constant)
+            
+            # Apply annealing schedule
+            spring_weight = self.get_spring_loss_weight()
+            spring_loss_value = spring_weight * spring_loss_value
+            print(f"Spring Loss (step {self.global_step}, weight={spring_weight:.3f}): {spring_loss_value}")
+
+        # Add spring loss to total loss, lambda is the weighting factor
+        if self.lambda_spring > 0:
+            loss = loss + self.lambda_spring * spring_loss_value
+
         metrics = {}
         metrics['train/val_loss'] = loss.detach()
         metrics['train/loss_per_batch_mean'] = torch.stack(rmsd_loss_I).mean().detach()
+        if self.lambda_spring > 0:
+           metrics['train/spring_loss'] = spring_loss_value.detach()
         
         for i, (l, e) in enumerate(zip(rmsd_loss_I, rmsd_error_I)):
             # Per-molecule: per-graph mean then averaged across graphs

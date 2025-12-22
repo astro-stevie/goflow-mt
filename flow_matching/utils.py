@@ -115,8 +115,8 @@ def spring_loss(pos_gen_I_N_3: Tensor, neb_idx_I_G: Tensor, batch_indices_N: Ten
         spring_dist = torch.linalg.vector_norm(spring_vec_N_3, dim=1)  # [N]
 
         # debug
-        avg_distance = spring_dist.mean().item()
-        print(f"Average distance between NEB images {neb_idx_sorted[i].item()} and {neb_idx_sorted[i+1].item()}: {avg_distance:.3f} Å")
+        # avg_distance = spring_dist.mean().item()
+        # print(f"Average distance between NEB images {neb_idx_sorted[i].item()} and {neb_idx_sorted[i+1].item()}: {avg_distance:.3f} Å")
 
         spring_energy = 0.5 * spring_constant * (spring_dist ** 2)
         
