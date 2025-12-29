@@ -220,8 +220,9 @@ class FlowModule(pl.LightningModule):
             counts = torch.bincount(batch.batch, minlength=batch.num_graphs).to(e.dtype).unsqueeze(1)  # (G,1)
             sum_per_graph = torch.zeros(batch.num_graphs, device=e.device).index_add(0, batch.batch, e)
             mean_per_graph = sum_per_graph / counts.squeeze(1)  # (G,)
-            metrics[f'train/error_image_{i}_mean_per_graph'] = mean_per_graph.mean().detach()
-            # metrics[f'train/loss_image_{i}'] = l.detach()
+            neb_idx = neb_img_I_G[i, 0].item()
+            metrics[f'train/error_image_{neb_idx}_mean_per_graph'] = mean_per_graph.mean().detach()
+            # metrics[f'train/loss_image_{neb_idx}'] = l.detach()
 
         return loss, metrics
 
