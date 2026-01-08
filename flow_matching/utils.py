@@ -102,23 +102,28 @@ def spring_loss(pos_gen_I_N_3: Tensor, neb_idx_I_G: Tensor, batch_indices_N: Ten
     pos_sorted_I_N_3 = pos_gen_I_N_3[sort_idx]
     
     spring_loss_total = 0.0
-    
+    spring_constants = [0.01, 0.02, 0.1, 0.5, 1.0, 0.5, 0.1, 0.02, 0.01]
+    spring_constant_subset = [spring_constants[k] for k in neb_idx_sorted[:-1].tolist()]
+   
     # Iterate through adjacent image pairs
     for i in range(len(neb_idx_sorted) - 1):
         pos_curr_N_3 = pos_sorted_I_N_3[i]
         pos_next_N_3 = pos_sorted_I_N_3[i + 1]
+        pos_past_N_3 = pos_next_N_3 if i == 0 else pos_sorted_I_N_3[i - 1]
         
         # Vector from current to next image (the "spring" direction)
-        spring_vec_N_3 = pos_next_N_3 - pos_curr_N_3  # [N, 3]
+        spring_vec_N_3_next = pos_next_N_3 - pos_curr_N_3  # [N, 3]
+        sprin_vec_N_3_past = pos_curr_N_3 - pos_past_N_3  # [N, 3]  
         
         # Spring force magnitude: minimize distance between images
-        spring_dist = torch.linalg.vector_norm(spring_vec_N_3, dim=1)  # [N]
+        spring_dist_next = torch.linalg.vector_norm(spring_vec_N_3_next, dim=1)  # [N]
+        spring_dist_past = torch.linalg.vector_norm(sprin_vec_N_3_past, dim=1)  # [N]
 
         # debug
         # avg_distance = spring_dist.mean().item()
         # print(f"Average distance between NEB images {neb_idx_sorted[i].item()} and {neb_idx_sorted[i+1].item()}: {avg_distance:.3f} Å")
 
-        spring_energy = 0.5 * spring_constant * (spring_dist ** 2)
+        spring_energy = spring_constant_subset[i] * spring_dist_next - spring_constant_subset[i-1] * spring_dist_past  # [N]
         
         if batch_indices_N is not None:
             # Compute spring loss per molecule, then average across molecules
@@ -155,6 +160,65 @@ def spring_force_vector(pos_curr_N_3: Tensor, pos_next_N_3: Tensor,
     spring_vec_N_3 = pos_next_N_3 - pos_curr_N_3
     spring_force = spring_constant * spring_vec_N_3
     return spring_force
+
+def align_x0_to_reference_batched(x_0_new_N_3, x_0_ref_N_3, batch_indices, num_graphs):
+    """
+    Align x_0_new to x_0_ref using Kabsch alignment per molecule in batch.
+    This ensures all samples are in the same rotational reference frame.
+    
+    Args:
+        x_0_new_N_3: New random x_0 positions [N, 3] to be aligned
+        x_0_ref_N_3: Reference x_0 positions [N, 3] (target frame)
+        batch_indices: Tensor indicating which molecule each atom belongs to
+        num_graphs: Number of molecules in batch
+    
+    Returns:
+        Aligned x_0 positions [N, 3] rotated to match x_0_ref frame
+    """
+    device = x_0_new_N_3.device
+    
+    # Compute the number of atoms per molecule
+    counts = torch.bincount(batch_indices, minlength=num_graphs).to(x_0_new_N_3.dtype)
+    
+    # Compute centroids for both sets via index_add
+    centers_ref_Nm_3 = torch.zeros((num_graphs, 3), device=device)
+    centers_new_Nm_3 = torch.zeros((num_graphs, 3), device=device)
+    centers_ref_Nm_3 = centers_ref_Nm_3.index_add(0, batch_indices, x_0_ref_N_3)
+    centers_new_Nm_3 = centers_new_Nm_3.index_add(0, batch_indices, x_0_new_N_3)
+    centers_ref_Nm_3 = centers_ref_Nm_3 / counts.unsqueeze(1)
+    centers_new_Nm_3 = centers_new_Nm_3 / counts.unsqueeze(1)
+    
+    # Center both point sets
+    x0_ref_centered_N_3 = x_0_ref_N_3 - centers_ref_Nm_3[batch_indices]
+    x0_new_centered_N_3 = x_0_new_N_3 - centers_new_Nm_3[batch_indices]
+    
+    # Compute cross-covariance matrix for each molecule
+    # We want to align x0_new to x0_ref, so: M = x0_new^T @ x0_ref
+    prod_N_3_3 = x0_new_centered_N_3.unsqueeze(2) * x0_ref_centered_N_3.unsqueeze(1)
+    M_Nm_3_3 = torch.zeros((num_graphs, 3, 3), device=device)
+    M_Nm_3_3 = M_Nm_3_3.index_add(0, batch_indices, prod_N_3_3)
+    
+    # Batched SVD
+    U_Nm_3_3, S_Nm_3, Vt_Nm_3_3 = torch.linalg.svd(M_Nm_3_3)
+    
+    # Reflection correction per molecule
+    det_Nm = torch.det(torch.bmm(U_Nm_3_3, Vt_Nm_3_3))
+    D_Nm_3_3 = torch.eye(3, device=device).unsqueeze(0).repeat(num_graphs, 1, 1)
+    D_Nm_3_3[det_Nm < 0, 2, 2] = -1
+    
+    # Optimal rotation matrix R
+    R_opt_Nm_3_3 = torch.bmm(U_Nm_3_3, torch.bmm(D_Nm_3_3, Vt_Nm_3_3))
+    
+    # Apply rotation to centered x0_new and translate to x0_ref frame
+    x0_new_rotated_N_3 = torch.bmm(
+        x0_new_centered_N_3.unsqueeze(1),  # (N, 1, 3)
+        R_opt_Nm_3_3[batch_indices]         # (N, 3, 3)
+    ).squeeze(1)  # (N, 3)
+    
+    # Translate to reference centroid
+    x0_aligned_N_3 = x0_new_rotated_N_3 + centers_ref_Nm_3[batch_indices]
+    
+    return x0_aligned_N_3
 
 def get_shortest_path_fast_batched_x_1(x_0_N_3, x_1_N_3, batch):
     # x_0_N_3, x_1_N_3 are tensors of shape (N, 3)

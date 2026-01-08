@@ -24,15 +24,47 @@ uv run flow_train.py \
     data=t1x \
     logger=[wandb,csv] \
     model.neb_img_subset=all \
-    model.num_steps=25 \
+    model.num_steps=50 \
     model.num_samples=50 \
     model.lambda_spring=0.01 \
-    model.spring_constant=1.0 \
     model.spring_loss_schedule=cosine \
-    task_name=train_neb_GT_cos_springF_${SLURM_JOB_ID} \
+    task_name=train_neb_cos_springF_${SLURM_JOB_ID} \
+    project=goflow-neb-springF \
+    test=true \
+    trainer.gradient_clip_val=1.0 \
+
+# Run full NEB training with proper configs
+uv run flow_train.py \
+    experiment=flow2_neb \
+    model=flow_neb \
+    data=t1x \
+    logger=[wandb,csv] \
+    model.neb_img_subset=all \
+    model.num_steps=25 \
+    model.num_samples=50 \
+    model.lambda_spring=0.1 \
+    model.spring_loss_schedule=linear \
+    task_name=train_neb_springF_0.1l_${SLURM_JOB_ID} \
+    project=goflow-neb-springF \
+    test=true \
+    trainer.gradient_clip_val=1.0 \
+
+
+# Run full NEB training with proper configs
+uv run flow_train.py \
+    experiment=flow2_neb \
+    model=flow_neb \
+    data=t1x \
+    logger=[wandb,csv] \
+    model.neb_img_subset=all \
+    model.num_steps=25 \
+    model.num_samples=50 \
+    model.lambda_spring=1 \
+    model.spring_loss_schedule=linear \
+    task_name=train_neb_springF_1l_${SLURM_JOB_ID} \
     project=goflow-neb-springF \
     test=true \
     trainer.gradient_clip_val=1.0 \
 
 echo "NEB training experiment complete!"
-echo "Check logs at: /home/stephg/goflow/logs/train_neb_GT_springF_${SLURM_JOB_ID}.out"
+echo "Check logs at: /home/stephg/goflow/logs/train_neb_cos_springF_${SLURM_JOB_ID}.out"

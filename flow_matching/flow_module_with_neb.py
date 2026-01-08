@@ -8,7 +8,7 @@ import lightning.pytorch as pl
 from torchdiffeq import odeint
 from torch_geometric.utils import scatter
 
-from flow_matching.utils import get_shortest_path_fast_batched_x_1, rmsd_error, rmsd_loss, spring_loss, spring_force_vector, get_substruct_matches, get_min_dmae_match_torch_batch, kabsch_align_batched
+from flow_matching.utils import get_shortest_path_fast_batched_x_1, rmsd_error, rmsd_loss, spring_loss, spring_force_vector, get_substruct_matches, get_min_dmae_match_torch_batch, kabsch_align_batched, align_x0_to_reference_batched
 import numpy as np
 
 from gotennet.models.components.outputs import Atomwise3DOut
@@ -47,7 +47,6 @@ class FlowModule(pl.LightningModule):
             sample_method: str = "gaussian",
             save_all_samples: bool = True,
             lambda_spring: float = 0.0,
-            spring_constant: float = 1.0,
             spring_loss_warmup_steps: int = 0,
             spring_loss_schedule: str = "linear",
             **kwargs
@@ -78,7 +77,6 @@ class FlowModule(pl.LightningModule):
 
         # NEB spring force parameters
         self.lambda_spring = lambda_spring
-        self.spring_constant = spring_constant
         self.spring_loss_warmup_steps = spring_loss_warmup_steps
         self.spring_loss_schedule = spring_loss_schedule
 
@@ -189,9 +187,23 @@ class FlowModule(pl.LightningModule):
             dx_dt_I_N_3 = []
             t_G_I = []
             neb_imgs_I_G = []
+            # Sample x_0 for first image (reference frame)
+            x_0_ref_N_3 = None
             for neb_idx in neb_img_subset:
                 x_1_N_3 = batch.pos_N_3_I[:, :, neb_idx]
-                x_0_N_3 = torch.randn_like(x_1_N_3, device=self.device)
+                
+                if x_0_ref_N_3 is None:
+                    # First image: sample x_0 normally
+                    x_0_N_3 = torch.randn_like(x_1_N_3, device=self.device)
+                    x_0_ref_N_3 = x_0_N_3  # Save as reference
+                else:
+                    # Subsequent images: sample and align to reference
+                    x_0_new_N_3 = torch.randn_like(x_1_N_3, device=self.device)
+
+                    # Align x_0_new to x_0_ref using Kabsch per molecule
+                    x_0_N_3 = align_x0_to_reference_batched(
+                        x_0_new_N_3, x_0_ref_N_3, batch.batch, batch.num_graphs
+                    )
 
                 t_G = torch.rand(batch.num_graphs, 1, device=self.device)
                 t_N = t_G[batch.batch]
@@ -224,8 +236,8 @@ class FlowModule(pl.LightningModule):
         # print(f"atom_I_N_3 shape: {atom_I_N_3.shape}")
         # print(f"neb_img_I_G shape: {neb_img_I_G.shape}")
         # print(f"neb_img_I_G unique values: {torch.unique(neb_img_I_G)}")
-        print(f"batch.num_graphs: {batch.num_graphs}")
-        print(f"batch.pos_N_3_I shape: {batch.pos_N_3_I.shape}")
+        # print(f"batch.num_graphs: {batch.num_graphs}")
+        # print(f"batch.pos_N_3_I shape: {batch.pos_N_3_I.shape}")
         # Check atoms per graph
         # atoms_per_graph = scatter(torch.ones(batch.pos_N_3_I.shape[0], device=batch.batch.device), 
         #                  batch.batch, 
@@ -245,41 +257,42 @@ class FlowModule(pl.LightningModule):
             rmsd_error_I.append(rmsd_error_value)
                 
         # Add TS weighting
-        if hasattr(batch, 'ts_idx') and neb_img_I_G.shape[0] > 1:
-            # Convert ts_indices to tensor if it's a list
-            if isinstance(batch.ts_idx, list):
-                ts_indices = torch.tensor(batch.ts_idx, device=self.device, dtype=torch.float32)
-            else:
-                ts_indices = batch.ts_idx.float().to(self.device)
+        # if hasattr(batch, 'ts_idx') and neb_img_I_G.shape[0] > 1:
+        #     # Convert ts_indices to tensor if it's a list
+        #     if isinstance(batch.ts_idx, list):
+        #         ts_indices = torch.tensor(batch.ts_idx, device=self.device, dtype=torch.float32)
+        #     else:
+        #         ts_indices = batch.ts_idx.float().to(self.device)
             
-            all_indices = torch.unique(neb_img_I_G).float()
-            weights = []
-            for neb_idx in all_indices:
-                # Exponential decay from TS: average distance to all TS in batch
-                dist = torch.abs(neb_idx - ts_indices).mean()
-                weight = torch.exp(-dist / 2.0)
-                weights.append(weight)
-            weights = torch.stack(weights)
-            weights = weights / weights.sum()
+        #     all_indices = torch.unique(neb_img_I_G).float()
+        #     weights = []
+        #     for neb_idx in all_indices:
+        #         # Exponential decay from TS: average distance to all TS in batch
+        #         dist = torch.abs(neb_idx - ts_indices).mean()
+        #         weight = torch.exp(-dist / 2.0)
+        #         weights.append(weight)
+        #     weights = torch.stack(weights)
+        #     weights = weights / weights.sum()
             
-            # Apply weights to losses (ensure alignment with rmsd_loss_I indexing)
-            weighted_losses = [w * l for w, l in zip(weights, rmsd_loss_I)]
-            loss = sum(weighted_losses)
-        else:
-            loss = torch.stack(rmsd_loss_I).mean()
+        #     # Apply weights to losses (ensure alignment with rmsd_loss_I indexing)
+        #     weighted_losses = [w * l for w, l in zip(weights, rmsd_loss_I)]
+        #     loss = sum(weighted_losses)
+        # else:
+        loss = torch.stack(rmsd_loss_I).mean()
 
         spring_loss_value = torch.tensor(0.0, device=self.device)
         if neb_img_I_G.shape[0] > 1 and self.lambda_spring > 0:
-            pos_pred_I_N_3 = x_t_I_N_3 + atom_I_N_3
+            # Expand t from per-graph [I, G, 1] to per-atom [I, N, 1]
+            t_I_N = t_I_G[:, batch.batch, :]  # Shape: [I, N, 1]
+            pos_pred_I_N_3 = x_t_I_N_3 + (1-t_I_N) * atom_I_N_3
             spring_loss_value = spring_loss(pos_pred_I_N_3, neb_img_I_G, 
-                                           batch_indices_N=batch.batch,
-                                           spring_constant=self.spring_constant)
+                                           batch_indices_N=batch.batch)
             
             # Apply annealing schedule
             spring_weight = self.get_spring_loss_weight()
             spring_loss_value = spring_weight * spring_loss_value
-            print(f"Spring Loss (step {self.global_step}, weight={spring_weight:.3f}): {spring_loss_value}")
-
+            # print(f"Spring Loss (step {self.global_step}, weight={spring_weight:.3f}): {spring_loss_value}")
+        
         # Add spring loss to total loss, lambda is the weighting factor
         if self.lambda_spring > 0:
             loss = loss + self.lambda_spring * spring_loss_value
