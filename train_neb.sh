@@ -23,16 +23,53 @@ uv run flow_train.py \
     model=flow_neb \
     data=t1x \
     logger=[wandb,csv] \
+<<<<<<< HEAD
     model.num_steps=25 \
+=======
+    model.neb_img_subset=all \
+    model.num_steps=50 \
+>>>>>>> fbab8f8 (added linear interpolation of energy-based spring froces and alighment to reference rotation framework)
     model.num_samples=50 \
 <<<<<<< HEAD
     task_name=train_test_neb_TS_${SLURM_JOB_ID} \
     project=goflow-neb-t1x \
 =======
     model.lambda_spring=0.01 \
-    model.spring_constant=1.0 \
     model.spring_loss_schedule=cosine \
-    task_name=train_neb_GT_cos_springF_${SLURM_JOB_ID} \
+    task_name=train_neb_cos_springF_${SLURM_JOB_ID} \
+    project=goflow-neb-springF \
+    test=true \
+    trainer.gradient_clip_val=1.0 \
+
+# Run full NEB training with proper configs
+uv run flow_train.py \
+    experiment=flow2_neb \
+    model=flow_neb \
+    data=t1x \
+    logger=[wandb,csv] \
+    model.neb_img_subset=all \
+    model.num_steps=25 \
+    model.num_samples=50 \
+    model.lambda_spring=0.1 \
+    model.spring_loss_schedule=linear \
+    task_name=train_neb_springF_0.1l_${SLURM_JOB_ID} \
+    project=goflow-neb-springF \
+    test=true \
+    trainer.gradient_clip_val=1.0 \
+
+
+# Run full NEB training with proper configs
+uv run flow_train.py \
+    experiment=flow2_neb \
+    model=flow_neb \
+    data=t1x \
+    logger=[wandb,csv] \
+    model.neb_img_subset=all \
+    model.num_steps=25 \
+    model.num_samples=50 \
+    model.lambda_spring=1 \
+    model.spring_loss_schedule=linear \
+    task_name=train_neb_springF_1l_${SLURM_JOB_ID} \
     project=goflow-neb-springF \
 >>>>>>> 1a8a47f (original neb version + logging of GT distances for spring forces)
     test=true \
@@ -40,7 +77,11 @@ uv run flow_train.py \
 
 echo "NEB training experiment complete!"
 <<<<<<< HEAD
+<<<<<<< HEAD
 echo "Check logs at: /home/stephg/goflow/logs/train_test_neb_all_${SLURM_JOB_ID}.out"
 =======
 echo "Check logs at: /home/stephg/goflow/logs/train_neb_GT_springF_${SLURM_JOB_ID}.out"
 >>>>>>> 1a8a47f (original neb version + logging of GT distances for spring forces)
+=======
+echo "Check logs at: /home/stephg/goflow/logs/train_neb_cos_springF_${SLURM_JOB_ID}.out"
+>>>>>>> fbab8f8 (added linear interpolation of energy-based spring froces and alighment to reference rotation framework)

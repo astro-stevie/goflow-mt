@@ -17,7 +17,7 @@ save_all_samples: True
 
 lambda_spring: 0.0               # Weight of spring loss (0.0 to disable)
 spring_constant: 1.0             # Spring stiffness (0.5-2.0 recommended)
-spring_loss_warmup_steps: 1000         # Steps to gradually increase spring loss (0→1)
+spring_loss_warmup_steps: 1050         # Steps to gradually increase spring loss (0→1)
 spring_loss_schedule: "linear"         # "linear" or "cosine"
 
 output:
