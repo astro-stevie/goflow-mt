@@ -17,6 +17,7 @@ echo "Node: $SLURM_NODELIST"
 echo "GPU: $CUDA_VISIBLE_DEVICES"
 echo "Working directory: $(pwd)"
 
+<<<<<<< HEAD
 # Run full NEB training with proper configs
 uv run flow_train.py \
     experiment=flow2_neb \
@@ -50,6 +51,8 @@ uv run flow_train.py \
     test=true \
     trainer.gradient_clip_val=1.0 \
 
+=======
+>>>>>>> 4ef5e4e (added python script for creating barrier split, but need to process energy data first)
 uv run flow_train.py \
     experiment=flow2_neb \
     model=flow_neb \
@@ -61,36 +64,6 @@ uv run flow_train.py \
     model.lambda_spring=1.0 \
     model.spring_loss_schedule=linear \
     task_name=train_neb_2-6i_springF_${SLURM_JOB_ID} \
-    project=goflow-neb-springF \
-    test=true \
-    trainer.gradient_clip_val=1.0 \
-
-uv run flow_train.py \
-    experiment=flow2_neb \
-    model=flow_neb \
-    data=t1x \
-    logger=[wandb,csv] \
-    model.neb_img_subset=[6,7,8,9] \
-    model.num_steps=25 \
-    model.num_samples=50 \
-    model.lambda_spring=1.0 \
-    model.spring_loss_schedule=linear \
-    task_name=train_neb_6-9i_springF_${SLURM_JOB_ID} \
-    project=goflow-neb-springF \
-    test=true \
-    trainer.gradient_clip_val=1.0 \
-
-uv run flow_train.py \
-    experiment=flow2_neb \
-    model=flow_neb \
-    data=t1x \
-    logger=[wandb,csv] \
-    model.neb_img_subset=[0,2,3,6,8] \
-    model.num_steps=25 \
-    model.num_samples=50 \
-    model.lambda_spring=1.0 \
-    model.spring_loss_schedule=linear \
-    task_name=train_neb_eveni_springF_${SLURM_JOB_ID} \
     project=goflow-neb-springF \
     test=true \
     trainer.gradient_clip_val=1.0 \

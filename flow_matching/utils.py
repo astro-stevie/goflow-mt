@@ -109,21 +109,26 @@ def spring_loss(pos_gen_I_N_3: Tensor, neb_idx_I_G: Tensor, batch_indices_N: Ten
     for i in range(len(neb_idx_sorted) - 1):
         pos_curr_N_3 = pos_sorted_I_N_3[i]
         pos_next_N_3 = pos_sorted_I_N_3[i + 1]
-        pos_past_N_3 = pos_next_N_3 if i == 0 else pos_sorted_I_N_3[i - 1]
         
         # Vector from current to next image (the "spring" direction)
         spring_vec_N_3_next = pos_next_N_3 - pos_curr_N_3  # [N, 3]
-        sprin_vec_N_3_past = pos_curr_N_3 - pos_past_N_3  # [N, 3]  
+        spring_dist_next = torch.linalg.vector_norm(spring_vec_N_3_next, dim=1, keepdim=False)  # [N]
+        spring_dist_next = torch.clamp(spring_dist_next, min=1e-6)
         
-        # Spring force magnitude: minimize distance between images
-        spring_dist_next = torch.linalg.vector_norm(spring_vec_N_3_next, dim=1)  # [N]
-        spring_dist_past = torch.linalg.vector_norm(sprin_vec_N_3_past, dim=1)  # [N]
-
-        # debug
-        # avg_distance = spring_dist.mean().item()
-        # print(f"Average distance between NEB images {neb_idx_sorted[i].item()} and {neb_idx_sorted[i+1].item()}: {avg_distance:.3f} Å")
-
-        spring_energy = spring_constant_subset[i] * spring_dist_next - spring_constant_subset[i-1] * spring_dist_past  # [N]
+        # For first image, only use forward spring; for others, balance forward and backward
+        if i == 0:
+            spring_energy = spring_constant_subset[i] * spring_dist_next  # [N]
+        else:
+            pos_past_N_3 = pos_sorted_I_N_3[i - 1]
+            spring_vec_N_3_past = pos_curr_N_3 - pos_past_N_3  # [N, 3]  
+            spring_dist_past = torch.linalg.vector_norm(spring_vec_N_3_past, dim=1, keepdim=False)  # [N]
+            spring_dist_past = torch.clamp(spring_dist_past, min=1e-6)
+            spring_energy = spring_constant_subset[i] * spring_dist_next - spring_constant_subset[i-1] * spring_dist_past  # [N]
+        
+        # Check for NaN/Inf before accumulating
+        if torch.isnan(spring_energy).any() or torch.isinf(spring_energy).any():
+            print(f"WARNING: NaN/Inf detected in spring energy at pair {i}")
+            continue
         
         if batch_indices_N is not None:
             # Compute spring loss per molecule, then average across molecules
@@ -138,6 +143,11 @@ def spring_loss(pos_gen_I_N_3: Tensor, neb_idx_I_G: Tensor, batch_indices_N: Ten
         else:
             # Fallback: average over all atoms
             spring_loss_total += spring_energy.mean()
+    
+    # Final NaN/Inf check before returning
+    if torch.isnan(spring_loss_total) or torch.isinf(spring_loss_total):
+        print("WARNING: Spring loss is NaN/Inf, returning zero")
+        return torch.tensor(0.0, device=pos_gen_I_N_3.device)
     
     return spring_loss_total
 
