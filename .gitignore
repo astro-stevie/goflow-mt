@@ -17,6 +17,7 @@ delete/
 slurm/
 temp.py
 test_per_neb_metrics.py
+train_neb.sh
 
 SPRING_FORCES_IMPLEMENTATION_GUIDE.md
 SPRING_FORCES_QUICKSTART.md

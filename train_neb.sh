@@ -58,27 +58,12 @@ uv run flow_train.py \
     model=flow_neb \
     data=t1x \
     logger=[wandb,csv] \
-    model.neb_img_subset=[2,3,4,5,6] \
+    model.neb_img_subset=all \
     model.num_steps=25 \
     model.num_samples=50 \
     model.lambda_spring=1.0 \
     model.spring_loss_schedule=linear \
-    task_name=train_neb_2-6i_springF_${SLURM_JOB_ID} \
-    project=goflow-neb-springF \
-    test=true \
-    trainer.gradient_clip_val=1.0 \
-
-uv run flow_train.py \
-    experiment=flow2_neb \
-    model=flow_neb \
-    data=t1x \
-    logger=[wandb,csv] \
-    model.neb_img_subset=[0,5,9] \
-    model.num_steps=25 \
-    model.num_samples=50 \
-    model.lambda_spring=1.0 \
-    model.spring_loss_schedule=linear \
-    task_name=train_neb_rstp_springF_${SLURM_JOB_ID} \
+    task_name=train_neb_all_springF_${SLURM_JOB_ID} \
     project=goflow-neb-springF \
 >>>>>>> 1a8a47f (original neb version + logging of GT distances for spring forces)
     test=true \
