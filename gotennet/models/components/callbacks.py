@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 import pandas as pd
 import csv
+import numpy as np
 
 import lightning.pytorch as L
 import torch
@@ -305,6 +306,15 @@ class TestAndSaveResultsAfterTrainingCallback(L.Callback):
 
         means = pd_results_df.mean()
         means['time'] = inference_time_per_rxn
+        
+        # Compute overall std of RMSD between consecutive NEB images across all reactions and images
+        all_rmsd_btw_images = []
+        for data in module.results_R:
+            if hasattr(data, 'rmsd_btw_images'):
+                all_rmsd_btw_images.extend(data.rmsd_btw_images)
+        
+        if all_rmsd_btw_images:
+            means['rmsd_std_btw_images_all'] = np.std(all_rmsd_btw_images)
 
         self.save_stats_to_csv(means, module)
         self.save_test_predictions(module)
