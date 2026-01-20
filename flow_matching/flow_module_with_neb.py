@@ -424,6 +424,20 @@ class FlowModule(pl.LightningModule):
 
                 if self.save_all_samples:
                     data.pos_gen_all_samples_S_N_3 = pos_gen_traj_Sv_T_Nm_3[:, -1, :, :]
+                
+                # Compute RMSD between consecutive generated NEB images (e.g., image1 - image0)
+                rmsd_btw_images = []
+                for neb_idx in range(len(neb_imgs_subset) - 1):
+                    pos_gen_curr = data.pos_gen_neb_I_T_Nm_3[neb_idx + 1, -1, :, :]  # Next image
+                    pos_gen_prev = data.pos_gen_neb_I_T_Nm_3[neb_idx, -1, :, :]      # Previous image
+                    rmsd_val = rmsd_error(pos_gen_curr, pos_gen_prev).mean().item()
+                    rmsd_btw_images.append(rmsd_val)
+                
+                data.rmsd_btw_images = rmsd_btw_images
+                data.rmsd_mean_across_images = np.mean(rmsd_btw_images) if rmsd_btw_images else 0.0
+                data.rmsd_std_across_images = np.std(rmsd_btw_images) if rmsd_btw_images else 0.0
+                print("RMSD between NEB images:", data.rmsd_btw_images, "Average RMSD:", data.rmsd_mean_across_images, "Std Dev:", data.rmsd_std_across_images)
+                
                 self.results_R.append(data.to("cpu"))
 
     def align_and_rotate_samples(self, data, pos_gen_S_T_Nm_3: torch.Tensor, ref_pos_Nm_3: torch.Tensor):

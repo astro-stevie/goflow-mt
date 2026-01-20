@@ -247,13 +247,20 @@ def evaluate_geometry(
     steric_clash_diff = (steric_clash_pred - steric_clash_gt).item()
     steric_clash_diff = min(steric_clash_diff, 9999)
 
-    return {
+    result = {
         "mae": round(float(mae), 4),
         "rmse": round(rmse.item(), 4),
         "angle_error": round(bond_angle_error.item(), 4),
         "dihedral_error": round(dihedral_angle_error.item(), 4),
         "steric_clash": round(steric_clash_diff, 4)
     }
+    
+    # Add RMSD between consecutive NEB images if available (only for full reaction evaluation)
+    if neb_image_idx is not None and hasattr(data, 'rmsd_mean_across_images'):
+        result["rmsd_mean_btw_images"] = round(data.rmsd_mean_across_images, 4)
+        result["rmsd_std_btw_images"] = round(data.rmsd_std_across_images, 4)
+    
+    return result
 
 # --------------------------- Metric Code End ---------------------------
 
