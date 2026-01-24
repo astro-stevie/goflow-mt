@@ -66,6 +66,228 @@ def rmsd_error(pred_I_N_3, gt_I_N_3):
 def rmsd_median_loss(pred_N_3, gt_N_3):
     return torch.median(torch.linalg.vector_norm(pred_N_3 - gt_N_3, dim=1))
 
+
+def compute_neb_path_metrics(pos_gen_neb_I_T_Nm_3: Tensor, pos_gt_I_Nm_3: Tensor, neb_imgs_subset: list) -> dict:
+    """
+    Compute NEB path quality metrics comparing generated and ground truth structures.
+    
+    Measures inter-image spacing, uniformity, and coherence of the NEB path.
+    
+    Args:
+        pos_gen_neb_I_T_Nm_3: Generated NEB path [Images, Time, Nm_atoms, 3]
+        pos_gt_I_Nm_3: Ground truth positions for each NEB image [Images, Nm_atoms, 3]
+        neb_imgs_subset: List of NEB image indices used
+    
+    Returns:
+        dict: Contains metrics for path quality assessment
+    """
+    metrics = {}
+    
+    # Compute RMSD between consecutive generated NEB images
+    rmsd_btw_images = []
+    for neb_idx in range(len(neb_imgs_subset) - 1):
+        pos_gen_curr = pos_gen_neb_I_T_Nm_3[neb_idx + 1, -1, :, :]  # Next image
+        pos_gen_prev = pos_gen_neb_I_T_Nm_3[neb_idx, -1, :, :]      # Previous image
+        rmsd_val = rmsd_error(pos_gen_curr, pos_gen_prev).mean().item()
+        rmsd_btw_images.append(rmsd_val)
+    
+    metrics['rmsd_btw_images'] = rmsd_btw_images
+    metrics['rmsd_mean_across_images'] = np.mean(rmsd_btw_images) if rmsd_btw_images else 0.0
+    metrics['rmsd_std_across_images'] = np.std(rmsd_btw_images) if rmsd_btw_images else 0.0
+    
+    # Path uniformity metrics (lower = more uniform spacing)
+    if len(rmsd_btw_images) > 1:
+        # Coefficient of variation: std/mean
+        metrics['rmsd_cv_across_images'] = metrics['rmsd_std_across_images'] / (metrics['rmsd_mean_across_images'] + 1e-8)
+        # Max deviation from mean (detects outlier jumps)
+        metrics['rmsd_max_deviation'] = max(abs(r - metrics['rmsd_mean_across_images']) for r in rmsd_btw_images)
+    else:
+        metrics['rmsd_cv_across_images'] = 0.0
+        metrics['rmsd_max_deviation'] = 0.0
+    
+    # Compare to ground truth inter-image distances
+    gt_rmsd_btw_images = []
+    for neb_idx in range(len(neb_imgs_subset) - 1):
+        gt_curr = pos_gt_I_Nm_3[neb_idx + 1]
+        gt_prev = pos_gt_I_Nm_3[neb_idx]
+        gt_rmsd_val = rmsd_error(gt_curr, gt_prev).mean().item()
+        gt_rmsd_btw_images.append(gt_rmsd_val)
+    
+    metrics['gt_rmsd_btw_images'] = gt_rmsd_btw_images
+    metrics['gt_rmsd_mean_across_images'] = np.mean(gt_rmsd_btw_images) if gt_rmsd_btw_images else 0.0
+    
+    # Spacing ratio: generated vs ground truth (1.0 = perfect match)
+    if metrics['gt_rmsd_mean_across_images'] > 1e-8:
+        metrics['spacing_ratio'] = metrics['rmsd_mean_across_images'] / metrics['gt_rmsd_mean_across_images']
+    else:
+        metrics['spacing_ratio'] = 1.0
+    
+    return metrics
+
+
+def spring_loss(pos_gen_I_N_3: Tensor, neb_idx_I_G: Tensor, batch_indices_N: Tensor = None, 
+                spring_constant: float = 1.0) -> Tensor:
+    """
+    Compute spring forces between adjacent NEB images with optional target spacing.
+    
+    In NEB, spring forces connect neighboring images along the reaction path.
+    When pos_target_I_N_3 is provided, this encourages the predicted structures to
+    match the spacing pattern of the target (ground truth) images. This is useful
+    when the NEB pathway has non-uniform spacing (e.g., denser near transition state).
+    
+    Args:
+        pos_gen_I_N_3: Generated positions [I, N, 3] where I is number of NEB images, N is atoms
+        neb_idx_I_G: NEB image indices [I, G] where I is images, G is graphs/molecules
+        batch_indices_N: Optional [N] batch indices to separate molecules in batch
+        spring_constant: Strength of spring coupling (default: 1.0)
+    
+    Returns:
+        Scalar loss tensor
+    """
+    if pos_gen_I_N_3.shape[0] < 2:
+        # No adjacent images to connect with springs
+        return torch.tensor(0.0, device=pos_gen_I_N_3.device)
+    
+    # Handle 1D or 2D neb_idx
+    if neb_idx_I_G.dim() == 1:
+        neb_idx_I = neb_idx_I_G
+    else:
+        # Use first graph's image indices (all graphs share same NEB image subset)
+        neb_idx_I = neb_idx_I_G[:, 0]
+    
+    # Compute spacing indices to find adjacent images
+    neb_idx_sorted, sort_idx = torch.sort(neb_idx_I)
+    pos_sorted_I_N_3 = pos_gen_I_N_3[sort_idx]
+    
+    spring_loss_total = 0.0
+    spring_constants = [0.01, 0.02, 0.1, 0.5, 1.0, 0.5, 0.1, 0.02, 0.01]
+    spring_constant_subset = [spring_constants[k] for k in neb_idx_sorted[:-1].tolist()]
+   
+    # Iterate through adjacent image pairs
+    for i in range(len(neb_idx_sorted) - 1):
+        pos_curr_N_3 = pos_sorted_I_N_3[i]
+        pos_next_N_3 = pos_sorted_I_N_3[i + 1]
+        
+        # Vector from current to next image (the "spring" direction)
+        spring_vec_N_3_next = pos_next_N_3 - pos_curr_N_3  # [N, 3]
+        spring_dist_next = torch.linalg.vector_norm(spring_vec_N_3_next, dim=1, keepdim=False)  # [N]
+        spring_dist_next = torch.clamp(spring_dist_next, min=1e-6)
+        
+        # For first image, only use forward spring; for others, balance forward and backward
+        if i == 0:
+            spring_energy = spring_constant_subset[i] * spring_dist_next  # [N]
+        else:
+            pos_past_N_3 = pos_sorted_I_N_3[i - 1]
+            spring_vec_N_3_past = pos_curr_N_3 - pos_past_N_3  # [N, 3]  
+            spring_dist_past = torch.linalg.vector_norm(spring_vec_N_3_past, dim=1, keepdim=False)  # [N]
+            spring_dist_past = torch.clamp(spring_dist_past, min=1e-6)
+            spring_energy = spring_constant_subset[i] * spring_dist_next - spring_constant_subset[i-1] * spring_dist_past  # [N]
+        
+        # Check for NaN/Inf before accumulating
+        if torch.isnan(spring_energy).any() or torch.isinf(spring_energy).any():
+            print(f"WARNING: NaN/Inf detected in spring energy at pair {i}")
+            continue
+        
+        if batch_indices_N is not None:
+            # Compute spring loss per molecule, then average across molecules
+            num_graphs = batch_indices_N.max().item() + 1
+            spring_loss_per_pair = 0.0
+            for g in range(num_graphs):
+                mask = (batch_indices_N == g)
+                spring_energy_g = spring_energy[mask]
+                spring_loss_per_pair += spring_energy_g.mean()
+            spring_loss_per_pair = spring_loss_per_pair / num_graphs
+            spring_loss_total += spring_loss_per_pair
+        else:
+            # Fallback: average over all atoms
+            spring_loss_total += spring_energy.mean()
+    
+    # Final NaN/Inf check before returning
+    if torch.isnan(spring_loss_total) or torch.isinf(spring_loss_total):
+        print("WARNING: Spring loss is NaN/Inf, returning zero")
+        return torch.tensor(0.0, device=pos_gen_I_N_3.device)
+    
+    return spring_loss_total
+
+
+def spring_force_vector(pos_curr_N_3: Tensor, pos_next_N_3: Tensor, 
+                        spring_constant: float = 1.0) -> Tensor:
+    """
+    Compute spring force vectors between adjacent NEB images.
+    
+    Returns the gradient of spring potential (force direction) for equilibrating images.
+    
+    Args:
+        pos_curr_N_3: Current image positions [N, 3]
+        pos_next_N_3: Next image positions [N, 3]
+        spring_constant: Spring constant
+    
+    Returns:
+        Force vectors [N, 3]
+    """
+    spring_vec_N_3 = pos_next_N_3 - pos_curr_N_3
+    spring_force = spring_constant * spring_vec_N_3
+    return spring_force
+
+def align_x0_to_reference_batched(x_0_new_N_3, x_0_ref_N_3, batch_indices, num_graphs):
+    """
+    Align x_0_new to x_0_ref using Kabsch alignment per molecule in batch.
+    This ensures all samples are in the same rotational reference frame.
+    
+    Args:
+        x_0_new_N_3: New random x_0 positions [N, 3] to be aligned
+        x_0_ref_N_3: Reference x_0 positions [N, 3] (target frame)
+        batch_indices: Tensor indicating which molecule each atom belongs to
+        num_graphs: Number of molecules in batch
+    
+    Returns:
+        Aligned x_0 positions [N, 3] rotated to match x_0_ref frame
+    """
+    device = x_0_new_N_3.device
+    
+    # Compute the number of atoms per molecule
+    counts = torch.bincount(batch_indices, minlength=num_graphs).to(x_0_new_N_3.dtype)
+    
+    # Compute centroids for both sets via index_add
+    centers_ref_Nm_3 = torch.zeros((num_graphs, 3), device=device)
+    centers_new_Nm_3 = torch.zeros((num_graphs, 3), device=device)
+    centers_ref_Nm_3 = centers_ref_Nm_3.index_add(0, batch_indices, x_0_ref_N_3)
+    centers_new_Nm_3 = centers_new_Nm_3.index_add(0, batch_indices, x_0_new_N_3)
+    centers_ref_Nm_3 = centers_ref_Nm_3 / counts.unsqueeze(1)
+    centers_new_Nm_3 = centers_new_Nm_3 / counts.unsqueeze(1)
+    
+    # Center both point sets
+    x0_ref_centered_N_3 = x_0_ref_N_3 - centers_ref_Nm_3[batch_indices]
+    x0_new_centered_N_3 = x_0_new_N_3 - centers_new_Nm_3[batch_indices]
+    
+    # Compute cross-covariance matrix for each molecule
+    # We want to align x0_new to x0_ref, so: M = x0_new^T @ x0_ref
+    prod_N_3_3 = x0_new_centered_N_3.unsqueeze(2) * x0_ref_centered_N_3.unsqueeze(1)
+    M_Nm_3_3 = torch.zeros((num_graphs, 3, 3), device=device)
+    M_Nm_3_3 = M_Nm_3_3.index_add(0, batch_indices, prod_N_3_3)
+    
+    # Batched SVD
+    U_Nm_3_3, S_Nm_3, Vt_Nm_3_3 = torch.linalg.svd(M_Nm_3_3)
+    
+    # Reflection correction per molecule
+    det_Nm = torch.det(torch.bmm(U_Nm_3_3, Vt_Nm_3_3))
+    D_Nm_3_3 = torch.eye(3, device=device).unsqueeze(0).repeat(num_graphs, 1, 1)
+    D_Nm_3_3[det_Nm < 0, 2, 2] = -1
+    
+    # Optimal rotation matrix R
+    R_opt_Nm_3_3 = torch.bmm(U_Nm_3_3, torch.bmm(D_Nm_3_3, Vt_Nm_3_3))
+    
+    # Apply rotation to centered x0_new and translate to x0_ref frame
+    x0_new_rotated_N_3 = torch.bmm(
+        x0_new_centered_N_3.unsqueeze(1),  # (N, 1, 3)
+        R_opt_Nm_3_3[batch_indices]         # (N, 3, 3)
+    ).squeeze(1)  # (N, 3)
+    
+    # Translate to reference centroid
+    x0_aligned_N_3 = x0_new_rotated_N_3 + centers_ref_Nm_3[batch_indices]
+    
+    return x0_aligned_N_3
+
 def get_shortest_path_fast_batched_x_1(x_0_N_3, x_1_N_3, batch):
     # x_0_N_3, x_1_N_3 are tensors of shape (N, 3)
     # batch.batch is a 1D tensor of length N with group indices.

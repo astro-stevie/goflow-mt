@@ -15,6 +15,13 @@ seed: 1
 neb_img_subset: null  # default: Use only TS image if available otherwise all
 save_all_samples: True
 
+lambda_spring: 0.0               # Weight of spring loss (0.0 to disable)
+spring_constant: 1.0             # Spring stiffness (0.5-2.0 recommended)
+spring_loss_warmup_steps: 1050         # Steps to gradually increase spring loss (0→1)
+spring_loss_schedule: "linear"         # "linear" or "cosine"
+preserve_path_coherence: False  # Whether to preserve path coherence when using multiple samples
+rmse_extended_metrics: False   # Whether to compute extended RMSD metrics between NEB images
+
 output:
   n_hidden: 64
 

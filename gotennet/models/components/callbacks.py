@@ -260,6 +260,15 @@ def evaluate_geometry(
     if neb_image_idx is not None and hasattr(data, 'rmsd_mean_across_images'):
         result["rmsd_mean_btw_images"] = round(data.rmsd_mean_across_images, 4)
         result["rmsd_std_btw_images"] = round(data.rmsd_std_across_images, 4)
+        # Additional path quality metrics
+        if hasattr(data, 'rmsd_cv_across_images'):
+            result["rmsd_cv_btw_images"] = round(data.rmsd_cv_across_images, 4)
+        if hasattr(data, 'rmsd_max_deviation'):
+            result["rmsd_max_deviation"] = round(data.rmsd_max_deviation, 4)
+        if hasattr(data, 'gt_rmsd_mean_across_images'):
+            result["gt_rmsd_mean_btw_images"] = round(data.gt_rmsd_mean_across_images, 4)
+        if hasattr(data, 'spacing_ratio'):
+            result["spacing_ratio"] = round(data.spacing_ratio, 4)
     
     return result
 
