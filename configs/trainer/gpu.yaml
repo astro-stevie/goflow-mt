@@ -6,3 +6,4 @@ devices: 1
 
 max_epochs: 650
 gradient_clip_val: 5.0
+precision: 32

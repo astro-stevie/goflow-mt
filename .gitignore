@@ -15,3 +15,6 @@ neb_test_methods_proposed.py
 test_neb_integration.py
 delete/
 slurm/
+temp.py
+test_per_neb_metrics.py
+sync-logs/rmse_investigation/

@@ -18,7 +18,7 @@ echo "GPU: $CUDA_VISIBLE_DEVICES"
 echo "Working directory: $(pwd)"
 
 # Use the trained checkpoint for testing only
-CHECKPOINT_PATH="logs/train_neb_all_311800/runs/2025-10-30_13-02-02/checkpoints/last.ckpt"
+CHECKPOINT_PATH="logs/train_test_neb_all_323916/runs/2025-12-01_15-22-36/checkpoints/epoch_168.ckpt"
 
 # Optional performance overrides (can be set in environment before sbatch)
 # Example: export NUM_WORKERS=6 PIN_MEMORY=true MP_CTX=spawn
@@ -31,15 +31,16 @@ if [ -f "$CHECKPOINT_PATH" ]; then
     
     # Run test only with the trained NEB model
     uv run flow_train.py \
-        experiment=flow_neb_test \
+        experiment=flow2_neb \
         model=flow_neb \
         data=t1x \
+        model.neb_img_subset=all \
         trainer=gpu \
-        logger=wandb \
+        logger=[wandb,csv] \
         model.num_steps=25 \
         model.num_samples=50 \
-        task_name=test_neb_all_${SLURM_JOB_ID} \
-        project=goflow-neb \
+        task_name=test_neb_${SLURM_JOB_ID} \
+        project=goflow-neb-t1x-rmse \
         train=false \
         test=true \
         ckpt_path="$CHECKPOINT_PATH" \
@@ -50,5 +51,5 @@ if [ -f "$CHECKPOINT_PATH" ]; then
 else
     echo "Error: Checkpoint not found at $CHECKPOINT_PATH"
     echo "Available checkpoints in directory:"
-    ls -la logs/train_neb_all_311800/runs/2025-10-30_13-02-02/checkpoints/ || echo "Directory not found"
+    ls -la logs/train_test_neb_all_323916/runs/2025-12-01_15-22-36/checkpoints/ || echo "Directory not found"
 fi

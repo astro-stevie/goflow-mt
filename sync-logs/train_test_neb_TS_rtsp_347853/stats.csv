@@ -1,0 +1,2 @@
+mae,rmse,angle_error,dihedral_error,steric_clash,time,num_steps,num_samples
+0.186,0.549,8.611,43.993,2.540,0.185,25.000,20.000

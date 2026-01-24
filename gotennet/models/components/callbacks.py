@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 import pandas as pd
 import csv
+import numpy as np
 
 import lightning.pytorch as L
 import torch
@@ -178,19 +179,27 @@ def evaluate_geometry(
     data: Data,
     r_threshold: float = 1.2,
     epsilon: float = 1.0,
+    neb_image_idx: Optional[int] = None
 ) -> Dict[str, float]:
     """
     Parameters:
     data (torch_geometric.data.Data): Reaction data
     r_threshold (float): Distance threshold for steric clash penalty.
     epsilon (float): Scaling factor for the clash penalty.
+    neb_image_idx (Optional[int]): If provided, evaluate this specific NEB image index.
+                                   Otherwise, evaluate the transition state.
 
     Returns:
     Dict[str, float]
     """
     # RMSE error
+    # Handle per-NEB-image evaluation
+    if neb_image_idx is not None and hasattr(data, 'pos_gen_neb_I_T_Nm_3'):
+        # Evaluate specific NEB image
+        gt_pos_N_3_raw = data.pos_N_3_I[:, :,neb_image_idx]  # [N_atoms, 3]
+        pred_pos_raw = data.pos_gen_neb_I_T_Nm_3[neb_image_idx, -1, :, :]  # [N_atoms, 3]
     # Handle both old format (data.pos with multiple dimensions) and NEB format (data.pos_N_3_I)
-    if hasattr(data, 'pos_N_3_I'):
+    elif hasattr(data, 'pos_N_3_I'):
         # NEB format: use actual transition state index if available
         if hasattr(data, 'ts_idx_used'):
             ts_idx = data.ts_idx_used
@@ -239,13 +248,20 @@ def evaluate_geometry(
     steric_clash_diff = (steric_clash_pred - steric_clash_gt).item()
     steric_clash_diff = min(steric_clash_diff, 9999)
 
-    return {
+    result = {
         "mae": round(float(mae), 4),
         "rmse": round(rmse.item(), 4),
         "angle_error": round(bond_angle_error.item(), 4),
         "dihedral_error": round(dihedral_angle_error.item(), 4),
         "steric_clash": round(steric_clash_diff, 4)
     }
+    
+    # Add RMSD between consecutive NEB images if available (only for full reaction evaluation)
+    if neb_image_idx is not None and hasattr(data, 'rmsd_mean_across_images'):
+        result["rmsd_mean_btw_images"] = round(data.rmsd_mean_across_images, 4)
+        result["rmsd_std_btw_images"] = round(data.rmsd_std_across_images, 4)
+    
+    return result
 
 # --------------------------- Metric Code End ---------------------------
 
@@ -283,15 +299,70 @@ class TestAndSaveResultsAfterTrainingCallback(L.Callback):
         inference_time_per_rxn = (time.perf_counter() - self._test_start_time) / len(module.results_R)
         self._test_start_time = None
         
+        # Evaluate overall (transition state) metrics
         pd_results_R = [evaluate_geometry(data) for data in module.results_R]
         pd_results_df = pd.DataFrame(pd_results_R)
         pd_results_df.to_csv(self.save_path / 'test_results.csv', index=False, float_format='%.3f')
 
         means = pd_results_df.mean()
         means['time'] = inference_time_per_rxn
+        
+        # Compute overall std of RMSD between consecutive NEB images across all reactions and images
+        all_rmsd_btw_images = []
+        for data in module.results_R:
+            if hasattr(data, 'rmsd_btw_images'):
+                all_rmsd_btw_images.extend(data.rmsd_btw_images)
+        
+        if all_rmsd_btw_images:
+            means['rmsd_std_btw_images_all'] = np.std(all_rmsd_btw_images)
 
         self.save_stats_to_csv(means, module)
         self.save_test_predictions(module)
+        
+        # Evaluate per-NEB-image metrics if available
+        if len(module.results_R) > 0 and hasattr(module.results_R[0], 'pos_gen_neb_I_T_Nm_3'):
+            # Collect all unique NEB indices used across reactions
+            all_neb_indices = set()
+            for data in module.results_R:
+                if hasattr(data, 'neb_indices_used'):
+                    all_neb_indices.update(data.neb_indices_used)
+                else:
+                    # Fallback: use all indices in this reaction's tensor
+                    all_neb_indices.update(range(data.pos_gen_neb_I_T_Nm_3.shape[0]))
+            
+            all_neb_indices = sorted(list(all_neb_indices))
+            
+            if len(all_neb_indices) > 1:  # Only log per-image if multiple images
+                log.info(f"Calculating per-NEB-image metrics for {len(all_neb_indices)} images...")
+                
+                for actual_neb_idx in all_neb_indices:
+                    pd_results_neb_R = []
+                    for data in module.results_R:
+                        # Only evaluate if this NEB image was used for this reaction
+                        if hasattr(data, 'neb_indices_used') and actual_neb_idx not in data.neb_indices_used:
+                            continue
+                        
+                        # Find the index in the neb_indices_used list
+                        if hasattr(data, 'neb_indices_used'):
+                            local_idx = list(data.neb_indices_used).index(actual_neb_idx)
+                        else:
+                            local_idx = actual_neb_idx
+                        
+                        # Only evaluate if local_idx is in bounds
+                        if local_idx < data.pos_gen_neb_I_T_Nm_3.shape[0]:
+                            pd_results_neb_R.append(evaluate_geometry(data, neb_image_idx=local_idx))
+                    
+                    if len(pd_results_neb_R) > 0:
+                        pd_results_neb_df = pd.DataFrame(pd_results_neb_R)
+                        
+                        # Save per-image results
+                        csv_path = self.save_path / f'test_results_neb_image_{actual_neb_idx}.csv'
+                        pd_results_neb_df.to_csv(csv_path, index=False, float_format='%.3f')
+                        
+                        # Log summary statistics for this NEB image
+                        means_neb = pd_results_neb_df.mean()
+                        log.info(f"NEB Image {actual_neb_idx} - MAE: {means_neb['mae']:.4f}, RMSE: {means_neb['rmse']:.4f}, "
+                                f"Angle: {means_neb['angle_error']:.2f}, Dihedral: {means_neb['dihedral_error']:.2f}")
 
 
 class EMALossCallback(L.Callback):
