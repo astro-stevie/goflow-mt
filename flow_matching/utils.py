@@ -67,6 +67,64 @@ def rmsd_median_loss(pred_N_3, gt_N_3):
     return torch.median(torch.linalg.vector_norm(pred_N_3 - gt_N_3, dim=1))
 
 
+def compute_neb_path_metrics(pos_gen_neb_I_T_Nm_3: Tensor, pos_gt_I_Nm_3: Tensor, neb_imgs_subset: list) -> dict:
+    """
+    Compute NEB path quality metrics comparing generated and ground truth structures.
+    
+    Measures inter-image spacing, uniformity, and coherence of the NEB path.
+    
+    Args:
+        pos_gen_neb_I_T_Nm_3: Generated NEB path [Images, Time, Nm_atoms, 3]
+        pos_gt_I_Nm_3: Ground truth positions for each NEB image [Images, Nm_atoms, 3]
+        neb_imgs_subset: List of NEB image indices used
+    
+    Returns:
+        dict: Contains metrics for path quality assessment
+    """
+    metrics = {}
+    
+    # Compute RMSD between consecutive generated NEB images
+    rmsd_btw_images = []
+    for neb_idx in range(len(neb_imgs_subset) - 1):
+        pos_gen_curr = pos_gen_neb_I_T_Nm_3[neb_idx + 1, -1, :, :]  # Next image
+        pos_gen_prev = pos_gen_neb_I_T_Nm_3[neb_idx, -1, :, :]      # Previous image
+        rmsd_val = rmsd_error(pos_gen_curr, pos_gen_prev).mean().item()
+        rmsd_btw_images.append(rmsd_val)
+    
+    metrics['rmsd_btw_images'] = rmsd_btw_images
+    metrics['rmsd_mean_across_images'] = np.mean(rmsd_btw_images) if rmsd_btw_images else 0.0
+    metrics['rmsd_std_across_images'] = np.std(rmsd_btw_images) if rmsd_btw_images else 0.0
+    
+    # Path uniformity metrics (lower = more uniform spacing)
+    if len(rmsd_btw_images) > 1:
+        # Coefficient of variation: std/mean
+        metrics['rmsd_cv_across_images'] = metrics['rmsd_std_across_images'] / (metrics['rmsd_mean_across_images'] + 1e-8)
+        # Max deviation from mean (detects outlier jumps)
+        metrics['rmsd_max_deviation'] = max(abs(r - metrics['rmsd_mean_across_images']) for r in rmsd_btw_images)
+    else:
+        metrics['rmsd_cv_across_images'] = 0.0
+        metrics['rmsd_max_deviation'] = 0.0
+    
+    # Compare to ground truth inter-image distances
+    gt_rmsd_btw_images = []
+    for neb_idx in range(len(neb_imgs_subset) - 1):
+        gt_curr = pos_gt_I_Nm_3[neb_idx + 1]
+        gt_prev = pos_gt_I_Nm_3[neb_idx]
+        gt_rmsd_val = rmsd_error(gt_curr, gt_prev).mean().item()
+        gt_rmsd_btw_images.append(gt_rmsd_val)
+    
+    metrics['gt_rmsd_btw_images'] = gt_rmsd_btw_images
+    metrics['gt_rmsd_mean_across_images'] = np.mean(gt_rmsd_btw_images) if gt_rmsd_btw_images else 0.0
+    
+    # Spacing ratio: generated vs ground truth (1.0 = perfect match)
+    if metrics['gt_rmsd_mean_across_images'] > 1e-8:
+        metrics['spacing_ratio'] = metrics['rmsd_mean_across_images'] / metrics['gt_rmsd_mean_across_images']
+    else:
+        metrics['spacing_ratio'] = 1.0
+    
+    return metrics
+
+
 def spring_loss(pos_gen_I_N_3: Tensor, neb_idx_I_G: Tensor, batch_indices_N: Tensor = None, 
                 spring_constant: float = 1.0) -> Tensor:
     """
