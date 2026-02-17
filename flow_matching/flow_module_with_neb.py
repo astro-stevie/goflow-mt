@@ -119,12 +119,12 @@ class FlowModule(pl.LightningModule):
             # Already at full weight after warmup
             weight = 1.0
         elif self.spring_loss_schedule == "cosine":
-            # Cosine annealing (optional: for gentle increase)
+            # Cosine annealing: gradually increase from 0 to 1 after warmup
             progress = (global_step - self.spring_loss_warmup_steps) / max(
                 self.trainer.max_steps - self.spring_loss_warmup_steps, 1
             )
             progress = min(progress, 1.0)
-            weight = 0.5 * (1 + torch.cos(torch.tensor(torch.pi * progress))).item()
+            weight = 0.5 * (1 - torch.cos(torch.tensor(torch.pi * progress))).item()
         else:
             weight = 1.0
         
