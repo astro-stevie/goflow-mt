@@ -18,3 +18,5 @@ slurm/
 temp.py
 test_per_neb_metrics.py
 sync-logs/rmse_investigation/
+neb_viz/
+sync-logs/figures_pdf/
