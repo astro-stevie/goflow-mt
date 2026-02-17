@@ -115,9 +115,6 @@ class FlowModule(pl.LightningModule):
         if global_step < self.spring_loss_warmup_steps:
             # Linear warmup phase
             weight = global_step / max(self.spring_loss_warmup_steps, 1)
-        elif self.spring_loss_schedule == "linear":
-            # Already at full weight after warmup
-            weight = 1.0
         elif self.spring_loss_schedule == "cosine":
             # Cosine annealing: gradually increase from 0 to 1 after warmup
             progress = (global_step - self.spring_loss_warmup_steps) / max(
@@ -137,7 +134,6 @@ class FlowModule(pl.LightningModule):
         num_atoms, dim, neb_img = batch.pos_N_3_I.shape
         neb_img_subset = self.neb_img_subset # Determine which NEB images to use
 
-        # Accept string sentinel 'all' or 'auto'
         if isinstance(neb_img_subset, str):
             if neb_img_subset.lower() in ['all', 'auto']:
                 neb_img_subset = list(range(0, neb_img))
@@ -146,7 +142,6 @@ class FlowModule(pl.LightningModule):
             
         # Case 1: Empty subset or None means use only TS (one image per reaction)
         if neb_img_subset is None or len(neb_img_subset) == 0:
-            # Get TS indices for each reaction in batch
             if hasattr(batch, 'ts_idx'):
                 ts_indices = batch.ts_idx
             else:
@@ -182,10 +177,10 @@ class FlowModule(pl.LightningModule):
             dx_dt_N_3 = x_1_aligned_N_3 - x_0_N_3
 
             # Return with single image dimension (I=1)
-            x_t_I_N_3 = x_t_N_3.unsqueeze(0)  # [1, N, 3]
-            dx_dt_I_N_3 = dx_dt_N_3.unsqueeze(0)  # [1, N, 3]
-            t_I_G = t_G.unsqueeze(0)  # [1, G, 1]
-            neb_imgs_I_G = torch.tensor(ts_indices, device=self.device).unsqueeze(0)  # [1, G]
+            x_t_I_N_3 = x_t_N_3.unsqueeze(0)  
+            dx_dt_I_N_3 = dx_dt_N_3.unsqueeze(0) 
+            t_I_G = t_G.unsqueeze(0) 
+            neb_imgs_I_G = torch.tensor(ts_indices, device=self.device).unsqueeze(0) 
 
         else:
             # Collect all flow data for all NEB images
@@ -233,32 +228,13 @@ class FlowModule(pl.LightningModule):
 
     def train_val_step_with_neb(self, batch: Data) -> Tensor:
         x_t_I_N_3, dx_dt_I_N_3, t_I_G, neb_img_I_G = self.get_perturbed_flow_point_and_time_with_neb(batch)
-        # print("NEB images used in this batch (train_val_step):", torch.unique(neb_img_I_G))
         atom_I_N_3 = self.model_output_with_neb(x_t_I_N_3, batch, t_I_G, neb_img_I_G)
-
-        # ------------------------------------------- DEBUGGING ------------------------------------------- 
-        # Add this debug to train_val_step_with_neb:
-        # print(f"x_t_I_N_3 shape: {x_t_I_N_3.shape}")
-        # print(f"atom_I_N_3 shape: {atom_I_N_3.shape}")
-        # print(f"neb_img_I_G shape: {neb_img_I_G.shape}")
-        # print(f"neb_img_I_G unique values: {torch.unique(neb_img_I_G)}")
-        # print(f"batch.num_graphs: {batch.num_graphs}")
-        # print(f"batch.pos_N_3_I shape: {batch.pos_N_3_I.shape}")
-        # Check atoms per graph
-        # atoms_per_graph = scatter(torch.ones(batch.pos_N_3_I.shape[0], device=batch.batch.device), 
-        #                  batch.batch, 
-        #                  dim=0, 
-        #                  reduce='sum')
-        # print(f"Atoms per graph: {atoms_per_graph}")
-        # print(f"Sum: {atoms_per_graph.sum()}")  
-        # --------------------------------------------------------------------------------------------------
 
         rmsd_loss_I = []
         rmsd_error_I = [] 
         for i in range(neb_img_I_G.shape[0]):
             rmsd_loss_value = rmsd_loss(atom_I_N_3[i], dx_dt_I_N_3[i])
             rmsd_error_value = rmsd_error(atom_I_N_3[i], dx_dt_I_N_3[i])
-            # print(f"NEB image {neb_img_I_G[i]}: RMSD Loss = {rmsd_loss_value}, RMSD Error = {rmsd_error_value}")
             rmsd_loss_I.append(rmsd_loss_value)
             rmsd_error_I.append(rmsd_error_value)
                 
@@ -289,7 +265,7 @@ class FlowModule(pl.LightningModule):
         spring_loss_value = torch.tensor(0.0, device=self.device)
         if neb_img_I_G.shape[0] > 1 and self.lambda_spring > 0:
             # Expand t from per-graph [I, G, 1] to per-atom [I, N, 1]
-            t_I_N = t_I_G[:, batch.batch, :]  # Shape: [I, N, 1]
+            t_I_N = t_I_G[:, batch.batch, :]
             pos_pred_I_N_3 = x_t_I_N_3 + (1-t_I_N) * atom_I_N_3
             spring_loss_value = spring_loss(pos_pred_I_N_3, neb_img_I_G, 
                                            batch_indices_N=batch.batch)
@@ -297,8 +273,7 @@ class FlowModule(pl.LightningModule):
             # Apply annealing schedule
             spring_weight = self.get_spring_loss_weight()
             spring_loss_value = spring_weight * spring_loss_value
-            # print(f"Spring Loss (step {self.global_step}, weight={spring_weight:.3f}): {spring_loss_value}")
-        
+           
         # Add spring loss to total loss, lambda is the weighting factor
         if self.lambda_spring > 0:
             loss = loss + self.lambda_spring * spring_loss_value
@@ -311,23 +286,21 @@ class FlowModule(pl.LightningModule):
         
         for i, (l, e) in enumerate(zip(rmsd_loss_I, rmsd_error_I)):
             # Per-molecule: per-graph mean then averaged across graphs
-            counts = torch.bincount(batch.batch, minlength=batch.num_graphs).to(e.dtype).unsqueeze(1)  # (G,1)
+            counts = torch.bincount(batch.batch, minlength=batch.num_graphs).to(e.dtype).unsqueeze(1)
             sum_per_graph = torch.zeros(batch.num_graphs, device=e.device).index_add(0, batch.batch, e)
-            mean_per_graph = sum_per_graph / counts.squeeze(1)  # (G,)
+            mean_per_graph = sum_per_graph / counts.squeeze(1) 
             neb_idx = neb_img_I_G[i, 0].item()
             metrics[f'train/error_image_{neb_idx}_mean_per_graph'] = mean_per_graph.mean().detach()
-            # metrics[f'train/loss_image_{neb_idx}'] = l.detach()
 
         return loss, metrics
 
     def model_output_with_neb(self, x_t_I_N_3, batch: Data, t_I_G: Tensor, neb_img_I_G: Tensor) -> Tensor:
 
-        num_images = neb_img_I_G.shape[0]  # Number of NEB images
+        num_images = neb_img_I_G.shape[0]
         atom_I_N_3 = []
         
-        # Handle single-image case separately for detecting effects of NEB embedding
+        # single images
         if num_images == 1:
-            # x_t_I_N_3 has shape [1, N, 3] in the single-image case; representation expects [N, 3]
             if x_t_I_N_3.dim() == 3 and x_t_I_N_3.shape[0] == 1:
                 x_t_N_3 = x_t_I_N_3[0]
             else:
@@ -347,7 +320,7 @@ class FlowModule(pl.LightningModule):
             for i in range(num_images):
                 # Extract data for this NEB image
                 x_t_N_3 = x_t_I_N_3[i] 
-                t_G = t_I_G[i]  # Shape: [num_graphs, 1]
+                t_G = t_I_G[i] 
                 neb_idx_G = neb_img_I_G[i]
                 
                 # Flatten t_G for time embedding (expects 1D tensor)
@@ -382,7 +355,6 @@ class FlowModule(pl.LightningModule):
         num_atoms, dim, num_neb_images = batch.pos_N_3_I.shape
         neb_imgs_subset = self.neb_img_subset # Determine which NEB images to use
 
-        # Accept string sentinel 'all' or 'auto'
         if isinstance(neb_imgs_subset, str):
             if neb_imgs_subset.lower() in ['all', 'auto']:
                 neb_imgs_subset = list(range(0, num_neb_images))
@@ -397,11 +369,9 @@ class FlowModule(pl.LightningModule):
 
     def _test_step_ts_only(self, batch: Batch, num_neb_images: int):
         """Test step for TS-only mode (single image per reaction)."""
-        # Get TS indices for each reaction in batch
         if hasattr(batch, 'ts_idx'):
             ts_indices = batch.ts_idx
         else:
-            # Fallback to middle image
             ts_indices = [num_neb_images // 2] * batch.num_graphs
             print("No ts_idx provided; using middle image for TS images:", ts_indices)
 
@@ -414,9 +384,7 @@ class FlowModule(pl.LightningModule):
 
         def ode_func(t, x_t_N_3):
             # x_t_N_3 shape: [N, 3] for single image
-            # Return shape should match: [N, 3]
             t_G = torch.full((batch.num_graphs, 1), t, device=self.device)
-            # Create neb_img_G for each reaction
             neb_idx_G = torch.tensor(ts_indices, dtype=torch.long, device=self.device)
             model_forces_N_3 = self.model_output_with_neb(x_t_N_3.unsqueeze(0), batch, t_G.unsqueeze(0), neb_idx_G.unsqueeze(0))
             return model_forces_N_3.squeeze(0)  # Remove image dimension
@@ -446,7 +414,7 @@ class FlowModule(pl.LightningModule):
 
             # Store single NEB image result
             data.pos_gen_neb = [pos_best_T_Nm_3]
-            data.pos_gen_neb_I_T_Nm_3 = torch.stack(data.pos_gen_neb, dim=0)  # [1, T, N, 3]
+            data.pos_gen_neb_I_T_Nm_3 = torch.stack(data.pos_gen_neb, dim=0) 
             data.neb_indices_used = [ts_idx]  # Store which NEB images were evaluated
             
             data.pos_gen_ = pos_best_T_Nm_3[-1, :, :]  # Last time step
