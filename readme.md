@@ -67,6 +67,7 @@ Our model and code are released under MIT License.
 
 If you use this code in your research, please cite the following thesis:
 
+```bibtex
 @mastersthesis{gstoettenmayr2026neb,
   title   = {Integrating nudged elastic band with flow matching for enhanced transition state prediction},
   author  = {Gst{\"o}ttenmayr, Stephanie},
@@ -77,6 +78,7 @@ If you use this code in your research, please cite the following thesis:
   doi     = {10.34726/hss.2026.139520},
   url     = {https://doi.org/10.34726/hss.2026.139520}
 }
+```
 
 Original GoFlow code:
 
