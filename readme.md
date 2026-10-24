@@ -7,9 +7,9 @@ My master thesis focused on expanding GoFlow with a concept from quatum mechanic
 
 ## Idea
 
-![ In this example, 5 NEB images are used to represent the reaction pathway from reactants to products. For each NEB image a random time t is sampled and atomic positions are drawn from Gaussian noise.](neb-theory-figures/neb_path_exp5.pdf)
+![ In this example, 5 NEB images are used to represent the reaction pathway from reactants to products. For each NEB image a random time t is sampled and atomic positions are drawn from Gaussian noise.](neb-theory-figures/neb_path_exp5.png)
 
-![Visualization of spring force integration between 5 consecutive NEB images. Spring forces are computed based on inter-image distances along the reaction pathway, promoting geometric continuity. During training, these forces contribute to the overall loss, guiding the model to produce velocity fields that respect the physical connectivity of the NEB trajectory.](neb-theory-figures/neb_path_exp5_sp.pdf)
+![Visualization of spring force integration between 5 consecutive NEB images. Spring forces are computed based on inter-image distances along the reaction pathway, promoting geometric continuity. During training, these forces contribute to the overall loss, guiding the model to produce velocity fields that respect the physical connectivity of the NEB trajectory.](neb-theory-figures/neb_path_exp5_sp.png)
 
 
 
@@ -67,14 +67,16 @@ Our model and code are released under MIT License.
 
 If you use this code in your research, please cite the following thesis:
 
-```bibtex
-@article{
-author = {Gstöttenmayr, Stephanie},
-title = {Integrating nudged elastic band with flow matching for enhanced transition state prediction},
-year = {2026},
-journal = {[Diploma Thesis, Technische Universität Wien]},
-doi = {https://doi.org/10.34726/hss.2026.139520}
-```
+@mastersthesis{gstoettenmayr2026neb,
+  title   = {Integrating nudged elastic band with flow matching for enhanced transition state prediction},
+  author  = {Gst{\"o}ttenmayr, Stephanie},
+  year    = 2026,
+  school  = {Technische Universit{\"a}t Wien},
+  address = {Vienna, Austria},
+  type    = {Diploma thesis},
+  doi     = {10.34726/hss.2026.139520},
+  url     = {https://doi.org/10.34726/hss.2026.139520}
+}
 
 Original GoFlow code:
 
