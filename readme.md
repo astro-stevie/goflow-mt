@@ -1,7 +1,17 @@
-# GoFlow: Efficient Transition State Geometry Prediction with Flow Matching and E(3)-Equivariant Neural Networks
+# GoFlow+NEB: Efficient Transition State Geometry Prediction with Flow Matching and E(3)-Equivariant Neural Networks utilizing Nudged Elastic Band
 
 GoFlow is an open-source model for predicting transition state geometries of single-step organic reactions.
 This repository contains the official implementation, including all scripts to fully reproduce the results reported in the paper.
+
+My master thesis focused on expanding GoFlow with a concept from quatum mechanical calculations - Nudged Elastic Band - to enhance transition state prediction. 
+
+## Idea
+
+![ In this example, 5 NEB images are used to represent the reaction pathway from reactants to products. For each NEB image a random time t is sampled and atomic positions are drawn from Gaussian noise.](neb-theory-figures/neb_path_exp5.pdf)
+
+![Visualization of spring force integration between 5 consecutive NEB images. Spring forces are computed based on inter-image distances along the reaction pathway, promoting geometric continuity. During training, these forces contribute to the overall loss, guiding the model to produce velocity fields that respect the physical connectivity of the NEB trajectory.](neb-theory-figures/neb_path_exp5_sp.pdf)
+
+
 
 ## Installation
 Install GoFlow dependencies with uv (recommended):
@@ -40,6 +50,8 @@ Each experiment has a separate shell script (.sh files).
 
 E.g. to train and test the model for all dataset splits, run `bash train_test_all_splits.sh` in a Unix shell.
 
+To train and test with the NEB integration run `train_neb.sh` for model training. If using spring forces, it is possible to choose between linear or cosine annealing (spring forces increase over the training time).
+
 Modify the shell scripts as required to set custom paths for your input and output directories. Also, edit the configuration files as needed.
 
 To run quantum mechanical saddle point optimizations, use the `tsopt.inp` script for ORCA together with a predicted transition state geometry (xyz file).
@@ -53,7 +65,18 @@ Our model and code are released under MIT License.
 
 ## Cite
 
-If you use this code in your research, please cite the following paper:
+If you use this code in your research, please cite the following thesis:
+
+```bibtex
+@article{
+author = {Gstöttenmayr, Stephanie},
+title = {Integrating nudged elastic band with flow matching for enhanced transition state prediction},
+year = {2026},
+journal = {[Diploma Thesis, Technische Universität Wien]},
+doi = {https://doi.org/10.34726/hss.2026.139520}
+```
+
+Original GoFlow code:
 
 ```bibtex
 @article{galustian2025goflow,
