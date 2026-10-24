@@ -7,11 +7,11 @@ My master thesis focused on expanding GoFlow with a concept from quatum mechanic
 
 ## Idea
 
-![ In this example, 5 NEB images are used to represent the reaction pathway from reactants to products. For each NEB image a random time t is sampled and atomic positions are drawn from Gaussian noise.](neb-theory-figures/neb_path_exp5.png)
+![In this example, 5 NEB images are used to represent the reaction pathway from reactants to products. For each NEB image a random time t is sampled and atomic positions are drawn from Gaussian noise.](neb-theory-figures/NEB_GaussCurve.png)
+In this example, 5 NEB images are used to represent the reaction pathway from reactants to products. For each NEB image a random time t is sampled and atomic positions are drawn from Gaussian noise.
 
 ![Visualization of spring force integration between 5 consecutive NEB images. Spring forces are computed based on inter-image distances along the reaction pathway, promoting geometric continuity. During training, these forces contribute to the overall loss, guiding the model to produce velocity fields that respect the physical connectivity of the NEB trajectory.](neb-theory-figures/neb_path_exp5_sp.png)
-
-
+Visualization of spring force integration between 5 consecutive NEB images. Spring forces are computed based on inter-image distances along the reaction pathway, promoting geometric continuity. During training, these forces contribute to the overall loss, guiding the model to produce velocity fields that respect the physical connectivity of the NEB trajectory.
 
 ## Installation
 Install GoFlow dependencies with uv (recommended):
